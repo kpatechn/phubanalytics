@@ -1,6 +1,6 @@
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { ExecutiveData, ItData, MarketingData, Property } from '@phub/contracts';
+import type { EngagementData, ExecutiveData, ItData, MarketingData, Property } from '@phub/contracts';
 import { buildApp } from '../src/app.js';
 import { jwtAuthenticator } from '../src/auth.js';
 import type { AnalyticsRepo } from '../src/repo.js';
@@ -9,7 +9,8 @@ const property: Property = { tenantId: 15001, propertyId: 1500001, name: 'Graton
 const zeroKpis = { sessions: 0, appOpens: 0, loginStarted: 0, loginSuccess: 0, playersLoggedIn: 0, activeGuests: 0, onsiteEvents: 0, apiErrors: 0, totalEvents: 0 };
 
 function fakeRepo(): AnalyticsRepo & { calls: Record<string, number> } {
-  const calls: Record<string, number> = { executive: 0, marketing: 0, it: 0 };
+  const calls: Record<string, number> = { executive: 0, engagement: 0, marketing: 0, it: 0 };
+  const asOfSeen: string[] = [];
   return {
     calls,
     ping: async () => {},
@@ -18,6 +19,11 @@ function fakeRepo(): AnalyticsRepo & { calls: Record<string, number> } {
     executive: async () => {
       calls['executive']!++;
       return { kpis: { ...zeroKpis, sessions: 186 }, previous: zeroKpis, daily: [], features: [] } satisfies ExecutiveData;
+    },
+    engagement: async (_scope, _previous, asOf) => {
+      calls['engagement']!++;
+      asOfSeen.push(asOf);
+      return { asOf } as unknown as EngagementData;
     },
     marketing: async () => {
       calls['marketing']!++;
@@ -110,10 +116,19 @@ describe('analytics API', () => {
 
   it('lets admins see every view and reports their views', async () => {
     const token = await sign(['analytics:admin']);
-    for (const view of ['executive', 'marketing', 'it']) {
+    for (const view of ['executive', 'engagement', 'marketing', 'it']) {
       expect((await get(`/api/analytics/${view}`, token)).statusCode).toBe(200);
     }
-    expect((await get('/api/analytics/me', token)).json()).toMatchObject({ views: ['executive', 'marketing', 'it'], authMode: 'jwt' });
+    expect((await get('/api/analytics/me', token)).json()).toMatchObject({ views: ['executive', 'engagement', 'marketing', 'it'], authMode: 'jwt' });
+  });
+
+  it('serves engagement to the exec role, with today in the property time zone', async () => {
+    const exec = await sign(['analytics:exec']);
+    const res = await get('/api/analytics/engagement?from=2026-09-03&to=2026-10-02', exec);
+    expect(res.statusCode).toBe(200);
+    // 18:00 UTC on Oct 22 is still Oct 22 in Los Angeles.
+    expect(res.json().data).toEqual({ asOf: '2026-10-22' });
+    expect((await get('/api/analytics/engagement', await sign(['analytics:marketing']))).statusCode).toBe(403);
   });
 
   it('defaults to the last 30 days with a short cache for open ranges', async () => {

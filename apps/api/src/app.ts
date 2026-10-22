@@ -17,7 +17,7 @@ export interface AppDeps {
   logger?: FastifyServerOptions['logger'];
 }
 
-const VIEWS = ['executive', 'marketing', 'it'] as const satisfies readonly View[];
+const VIEWS = ['executive', 'engagement', 'marketing', 'it'] as const satisfies readonly View[];
 
 const SummaryQuery = z.object({
   from: z.string().refine(isIsoDate, 'must be a date as YYYY-MM-DD').optional(),
@@ -161,9 +161,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         const [data, freshness] = await Promise.all([
           view === 'executive'
             ? deps.repo.executive(scope, { ...scope, from: range.previousFrom, to: range.previousTo })
-            : view === 'marketing'
-              ? deps.repo.marketing(scope)
-              : deps.repo.it(scope),
+            : view === 'engagement'
+              ? deps.repo.engagement(scope, { ...scope, from: range.previousFrom, to: range.previousTo }, todayIn(property.timeZone, now()))
+              : view === 'marketing'
+                ? deps.repo.marketing(scope)
+                : deps.repo.it(scope),
           deps.repo.freshness(property),
         ]);
         return {

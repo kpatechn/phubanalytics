@@ -45,6 +45,22 @@ rule_event_day AS (
     SELECT d."tenantId", d."propertyId", d."bucketDate" AS day, r."eventId", r."dimensionType", sum(d."eventCount") AS c
       FROM analytics."eventDaily" d JOIN analytics."dimensionRule" r ON r."eventId" = d."eventId" AND r."isActive"
      GROUP BY 1, 2, 3, 4, 5),
+-- Accounts with a foreground event, per local day, straight from raw events.
+raw_active AS (
+    SELECT e."tenantId", e."propertyId", (e."createdDate" AT TIME ZONE p."timeZone")::date AS day,
+           count(DISTINCT e."userId") AS accounts, count(*) AS c
+      FROM data."dexAnalytics" e
+      JOIN analytics.property p ON p."tenantId" = e."tenantId" AND p."propertyId" = e."propertyId"
+      JOIN analytics."eventCatalog" c ON c."eventId" = e."eventId" AND c."isForeground"
+     WHERE nullif(btrim(e."userId"), '') IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM analytics."excludedUser" x
+                        WHERE x."tenantId" = e."tenantId" AND x."propertyId" = e."propertyId" AND x."userId" = e."userId")
+     GROUP BY 1, 2, 3),
+rollup_active AS (
+    SELECT "tenantId", "propertyId", "bucketDate" AS day,
+           count(*) FILTER (WHERE "foregroundEventCount" > 0) AS accounts, sum("foregroundEventCount") AS c
+      FROM analytics."guestDaily" GROUP BY 1, 2, 3
+    HAVING sum("foregroundEventCount") > 0),
 rule_dim_day AS (
     SELECT "tenantId", "propertyId", "bucketDate" AS day, "eventId", "dimensionType", sum("eventCount") AS c
       FROM analytics."eventDimensionDaily" GROUP BY 1, 2, 3, 4, 5),
@@ -96,7 +112,10 @@ checks(ord, name, expected, actual) AS (
         (SELECT count(*) FROM api_error_day a FULL JOIN errors_day e USING ("tenantId", "propertyId", day) WHERE a.c IS DISTINCT FROM e.c)::text
     UNION ALL SELECT 55, 'Rule-days where dimension total <> event count', '0',
         (SELECT count(*) FROM rule_event_day a FULL JOIN rule_dim_day b USING ("tenantId", "propertyId", day, "eventId", "dimensionType") WHERE a.c IS DISTINCT FROM b.c)::text
-    UNION ALL SELECT 56, 'Queued hours left after refresh', '0',
+    UNION ALL SELECT 56, 'Days where active accounts (foreground) <> raw', '0',
+        (SELECT count(*) FROM raw_active r FULL JOIN rollup_active g USING ("tenantId", "propertyId", day)
+          WHERE r.accounts IS DISTINCT FROM g.accounts OR r.c IS DISTINCT FROM g.c)::text
+    UNION ALL SELECT 57, 'Queued hours left after refresh', '0',
         (SELECT count(*) FROM analytics."refreshQueue")::text
 )
 SELECT name AS "check", expected, actual, CASE WHEN expected = actual THEN 'PASS' ELSE 'FAIL' END AS result

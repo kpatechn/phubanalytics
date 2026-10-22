@@ -14,6 +14,7 @@ import { fmtRange, fmtTimestamp } from './format';
 
 const TABS: { view: View; path: string; label: string }[] = [
   { view: 'executive', path: 'executive', label: 'Executive' },
+  { view: 'engagement', path: 'engagement', label: 'Engagement' },
   { view: 'marketing', path: 'marketing', label: 'Marketing' },
   { view: 'it', path: 'it', label: 'IT & Operations' },
 ];

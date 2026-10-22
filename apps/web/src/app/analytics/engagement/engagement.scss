@@ -1,0 +1,21 @@
+.cohorts th[scope='row'] {
+  font-weight: 500;
+  color: var(--ink2);
+  white-space: nowrap;
+}
+
+// Retention cells: the percentage is always printed; the tint only reinforces it.
+.cohorts td.cell {
+  background: color-mix(in srgb, var(--accent) var(--tint, 0%), transparent);
+  border-left: 2px solid var(--surface);
+}
+
+.cohorts td.empty {
+  background: var(--grid);
+  border-left: 2px solid var(--surface);
+}
+
+.definition p {
+  margin: 8px 0 0;
+  font-size: 0.88rem;
+}

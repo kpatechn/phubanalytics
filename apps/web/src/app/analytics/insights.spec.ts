@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { ExecutiveData, ExecutiveKpis, ItData, MarketingData } from '@phub/contracts';
-import { executiveInsights, itInsights, marketingInsights } from './insights';
+import type { EngagementData, EngagementSummary, ExecutiveData, ExecutiveKpis, ItData, MarketingData } from '@phub/contracts';
+import { engagementInsights, executiveInsights, itInsights, marketingInsights } from './insights';
 
 const kpis = (over: Partial<ExecutiveKpis> = {}): ExecutiveKpis => ({
   sessions: 0, appOpens: 0, loginStarted: 0, loginSuccess: 0, playersLoggedIn: 0, activeGuests: 0, onsiteEvents: 0, apiErrors: 0, totalEvents: 0, ...over,
@@ -105,5 +105,36 @@ describe('marketing insights', () => {
     expect(ids(marketingInsights(funnel(0, 0, 38, 0)))).toContain('cta-gap');
     expect(ids(marketingInsights(funnel(0, 0, 19, 0)))).not.toContain('cta-gap');
     expect(ids(marketingInsights(funnel(0, 0, 38, 1)))).not.toContain('cta-gap');
+  });
+});
+
+const summary = (over: Partial<EngagementSummary> = {}): EngagementSummary => ({
+  dau: 0, wau: 0, mau: 0, dauMau: null, wauMau: null, activeAccounts: 0, newAccounts: 0, returningAccounts: 0, onsiteAccounts: 0, ...over,
+});
+const engagement = (over: Partial<EngagementSummary> = {}, week = { eligible: 0, returned: 0 }): EngagementData => ({
+  summary: summary(over), previous: summary(), daily: [], features: [], cohorts: [], backgroundEvents: [], historyStart: null,
+  returnRates: [{ days: 7, ...week }, { days: 30, eligible: 0, returned: 0 }],
+});
+
+describe('engagement insights', () => {
+  it('below 20 active accounts: only the small-sample note', () => {
+    expect(ids(engagementInsights(engagement({ activeAccounts: 19, newAccounts: 15, mau: 19, wauMau: 0.5 })))).toEqual(['small-sample']);
+  });
+
+  it('at 20 accounts: stickiness and on-property share appear', () => {
+    const list = ids(engagementInsights(engagement({ activeAccounts: 20, newAccounts: 5, onsiteAccounts: 8, mau: 20, wauMau: 0.4 })));
+    expect(list).toEqual(['stickiness', 'onsite-share']);
+  });
+
+  it('week return: silent below 20 eligible, good at the 25% target, warn below it', () => {
+    const base = { activeAccounts: 40, newAccounts: 10, mau: 40, wauMau: 0.4 };
+    expect(ids(engagementInsights(engagement(base, { eligible: 19, returned: 1 })))).not.toContain('week-return');
+    expect(find(engagementInsights(engagement(base, { eligible: 20, returned: 5 })), 'week-return')?.severity).toBe('good');
+    expect(find(engagementInsights(engagement(base, { eligible: 20, returned: 4 })), 'week-return')?.severity).toBe('warn');
+  });
+
+  it('mostly new: above half of active accounts, not at exactly half', () => {
+    expect(ids(engagementInsights(engagement({ activeAccounts: 20, newAccounts: 11 })))).toContain('mostly-new');
+    expect(ids(engagementInsights(engagement({ activeAccounts: 20, newAccounts: 10 })))).not.toContain('mostly-new');
   });
 });

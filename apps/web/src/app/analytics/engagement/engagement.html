@@ -1,0 +1,101 @@
+<div class="page">
+  @if (problem(); as p) {
+    <app-error-panel [problem]="p" (retry)="filters.reload()" />
+  } @else if (tiles(); as k) {
+    @let d = data()!;
+    <app-insight-list [insights]="insights()" />
+
+    <section class="kpi-grid" aria-label="Active accounts">
+      <app-kpi-tile metric="dau" [value]="k.dau.value" [delta]="k.dau.delta" sub="average per day" />
+      <app-kpi-tile metric="wau" [value]="k.wau.value" [delta]="k.wau.delta" sub="average, trailing 7 days" />
+      <app-kpi-tile metric="mau" [value]="k.mau.value" [delta]="k.mau.delta" sub="trailing 30 days at period end" />
+      <app-kpi-tile metric="dauMau" [value]="k.dauMau.value" [delta]="k.dauMau.delta" sub="stickiness" />
+      <app-kpi-tile metric="wauMau" [value]="k.wauMau.value" [delta]="k.wauMau.delta" />
+      <app-kpi-tile metric="periodActive" [value]="k.active.value" [delta]="k.active.delta" sub="in the period" />
+    </section>
+
+    <section class="kpi-grid" aria-label="New, returning and on-property accounts">
+      <app-kpi-tile metric="newAccounts" [value]="k.new.value" [sub]="k.new.sub" [delta]="k.new.delta" />
+      <app-kpi-tile metric="returningAccounts" [value]="k.returning.value" [sub]="k.returning.sub" [delta]="k.returning.delta" />
+      <app-kpi-tile metric="onsiteAccounts" [value]="k.onsite.value" [sub]="k.onsite.sub" [delta]="k.onsite.delta" />
+      <app-kpi-tile metric="returned7" [value]="k.week.value" [sub]="k.week.sub" />
+      <app-kpi-tile metric="returned30" [value]="k.month.value" [sub]="k.month.sub" />
+    </section>
+
+    <div class="grid-2">
+      <app-chart-card heading="Active accounts" sub="DAU, and distinct accounts in the trailing 7 (WAU) and 30 (MAU) days" [columns]="dailyColumns" [rows]="dailyRows()">
+        <div class="chart" [appChart]="activeChart()" chartLabel="Line chart of daily, weekly and monthly active accounts"></div>
+      </app-chart-card>
+      <app-chart-card heading="Stickiness" sub="Share of monthly active accounts active that day (DAU/MAU) or week (WAU/MAU)" [columns]="dailyColumns" [rows]="dailyRows()">
+        <div class="chart" [appChart]="stickinessChart()" chartLabel="Line chart of DAU over MAU and WAU over MAU, in percent"></div>
+      </app-chart-card>
+      <app-chart-card heading="New vs returning" sub="Active accounts per day by whether it was their first active day" [columns]="dailyColumns" [rows]="dailyRows()">
+        <div class="chart" [appChart]="newReturningChart()" chartLabel="Stacked bar chart of new and returning active accounts per day"></div>
+      </app-chart-card>
+      <app-chart-card heading="Active on property" sub="Accounts using the app on property, against all active accounts" [columns]="dailyColumns" [rows]="dailyRows()">
+        <div class="chart" [appChart]="onsiteChart()" chartLabel="Bar chart of accounts active on property per day, with all daily active accounts as a line"></div>
+      </app-chart-card>
+    </div>
+
+    <div class="grid-2">
+      <section class="card" aria-labelledby="eng-features">
+        <div class="card-head"><div><h2 id="eng-features">Feature reach</h2><div class="card-sub">Accounts that used each feature, out of {{ k.active.value }} active</div></div></div>
+        <app-bar-list [items]="features()" />
+      </section>
+
+      <section class="card" aria-labelledby="eng-cohorts">
+        <div class="card-head"><div><h2 id="eng-cohorts">Weekly retention</h2><div class="card-sub">Accounts first active in a week (Monday start), and the share active again in each later week</div></div></div>
+        @if (cohortGrid().rows.length === 0) {
+          <p class="note">No new accounts in this period.</p>
+        } @else {
+          <div class="table-wrap">
+            <table class="data cohorts">
+              <thead>
+                <tr>
+                  <th scope="col">First active week</th>
+                  <th scope="col" class="num">Accounts</th>
+                  @for (w of cohortGrid().weeks; track w) {
+                    <th scope="col" class="num">Wk {{ w }}</th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (r of cohortGrid().rows; track r.label) {
+                  <tr>
+                    <th scope="row">{{ r.label }}</th>
+                    <td class="num">{{ r.size }}</td>
+                    @for (cell of r.cells; track $index) {
+                      @if (cell) {
+                        <td class="num cell" [title]="cell.title" [style.--tint]="cell.tint + '%'">{{ cell.text }}@if (cell.partial) {<span aria-hidden="true">*</span><span class="visually-hidden"> (week in progress)</span>}</td>
+                      } @else {
+                        <td class="num empty"></td>
+                      }
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <p class="note">* Week still in progress. Week 0 is the week the accounts were first active, so it is always 100%.</p>
+        }
+      </section>
+    </div>
+
+    <section class="card definition" aria-labelledby="eng-def">
+      <h2 id="eng-def">How activity is counted</h2>
+      <p>
+        An account is <strong>active</strong> on a day when it sends at least one foreground event: opening the app, viewing a screen,
+        tapping, or using a feature. These don't count, because they can fire without the guest using the app:
+        <span class="mono">{{ d.backgroundEvents.join(', ') }}</span>.
+      </p>
+      <p class="note">
+        Counts are accounts (signed-in users), not devices.
+        @if (historyStart(); as start) {
+          "New" means first active since {{ start }}, the oldest data kept.
+        }
+      </p>
+    </section>
+  } @else {
+    <app-skeleton />
+  }
+</div>

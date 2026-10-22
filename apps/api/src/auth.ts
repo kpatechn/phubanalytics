@@ -11,6 +11,7 @@ export type Authenticator = (headers: { authorization?: string | undefined }) =>
 
 export const VIEW_ROLE: Record<View, Role> = {
   executive: 'analytics:exec',
+  engagement: 'analytics:exec',
   marketing: 'analytics:marketing',
   it: 'analytics:it',
 };

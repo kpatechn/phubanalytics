@@ -1,4 +1,17 @@
-import type { DailyPoint, ExecutiveData, ExecutiveKpis, FeatureUsage, ItData, MarketingData, Property } from '@phub/contracts';
+import type {
+  DailyPoint,
+  EngagementData,
+  EngagementPoint,
+  EngagementSummary,
+  ExecutiveData,
+  ExecutiveKpis,
+  FeatureUsage,
+  ItData,
+  MarketingData,
+  Property,
+  RetentionCohort,
+  ReturnRate,
+} from '@phub/contracts';
 import type { Sql } from './db.js';
 
 // Every query reads the analytics rollups (database dexl, schema analytics),
@@ -23,9 +36,43 @@ export interface AnalyticsRepo {
   properties(): Promise<Property[]>;
   freshness(property: Property): Promise<Freshness>;
   executive(scope: Scope, previous: Scope): Promise<ExecutiveData>;
+  /** asOf: today in the property's time zone; only days before it count as complete. */
+  engagement(scope: Scope, previous: Scope, asOf: string): Promise<EngagementData>;
   marketing(scope: Scope): Promise<MarketingData>;
   it(scope: Scope): Promise<ItData>;
 }
+
+interface PeriodCounts {
+  activeAccounts: number;
+  newAccounts: number;
+  onsiteAccounts: number;
+}
+
+/** Weeks of retention shown per cohort, after the cohort week itself. */
+const RETENTION_WEEKS = 8;
+
+const round = (value: number, digits: number) => Math.round(value * 10 ** digits) / 10 ** digits;
+
+function summarize(points: EngagementPoint[], counts: PeriodCounts): EngagementSummary {
+  const avg = (pick: (p: EngagementPoint) => number) => (points.length ? points.reduce((n, p) => n + pick(p), 0) / points.length : 0);
+  const withMau = points.filter((p) => p.mau > 0);
+  const ratio = (pick: (p: EngagementPoint) => number) =>
+    withMau.length ? round(withMau.reduce((n, p) => n + pick(p) / p.mau, 0) / withMau.length, 4) : null;
+  return {
+    dau: round(avg((p) => p.dau), 1),
+    wau: round(avg((p) => p.wau), 1),
+    mau: points.at(-1)?.mau ?? 0,
+    dauMau: ratio((p) => p.dau),
+    wauMau: ratio((p) => p.wau),
+    activeAccounts: counts.activeAccounts,
+    newAccounts: counts.newAccounts,
+    returningAccounts: counts.activeAccounts - counts.newAccounts,
+    onsiteAccounts: counts.onsiteAccounts,
+  };
+}
+
+/** Days between two YYYY-MM-DD dates. */
+const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
 interface DimensionRow {
   value: string;
@@ -104,6 +151,132 @@ export function createRepo(sql: Sql): AnalyticsRepo {
     return rows.map((r) => ({ ...r }));
   }
 
+  // Engagement: an account is active on a day when guestDaily."foregroundEventCount" > 0.
+
+  /** First active day of every account, over all history up to `until`. */
+  const firstActive = (t: number, p: number, until: string) => sql`
+    SELECT g."userId" AS u, min(g."bucketDate") AS f
+      FROM analytics."guestDaily" g
+     WHERE g."tenantId" = ${t} AND g."propertyId" = ${p} AND g."foregroundEventCount" > 0
+       AND g."bucketDate" <= ${until}::date
+     GROUP BY g."userId"`;
+
+  /**
+   * Daily DAU, trailing WAU (7 days) and MAU (30 days), on-property and new accounts.
+   * Rolling distinct counts: each active day covers the next n days; overlapping
+   * coverage per account is merged with lag(), then +1/-1 edges are summed in day order.
+   */
+  async function engagementSeries(s: Scope): Promise<EngagementPoint[]> {
+    const rows = await sql<EngagementPoint[]>`
+      WITH a AS (
+        SELECT g."userId" AS u, g."bucketDate" AS d, g."onsiteForegroundEventCount" > 0 AS onsite
+          FROM analytics."guestDaily" g
+         WHERE g."tenantId" = ${s.tenantId} AND g."propertyId" = ${s.propertyId} AND g."foregroundEventCount" > 0
+           AND g."bucketDate" BETWEEN ${s.from}::date - 29 AND ${s.to}::date
+      ),
+      firsts AS (${firstActive(s.tenantId, s.propertyId, s.to)}),
+      seg AS (
+        SELECT w.n, a.d, lag(a.d) OVER (PARTITION BY w.n, a.u ORDER BY a.d) AS prev
+          FROM a CROSS JOIN (VALUES (7), (30)) AS w(n)
+      ),
+      edges AS (
+        SELECT n, greatest(d, coalesce(prev + n, d)) AS day, 1 AS delta FROM seg
+        UNION ALL
+        SELECT n, d + n, -1 FROM seg
+      ),
+      running AS (
+        SELECT n, day, sum(sum(delta)) OVER (PARTITION BY n ORDER BY day) AS active
+          FROM edges GROUP BY n, day
+      ),
+      daily AS (
+        SELECT a.d, count(*) AS dau, count(*) FILTER (WHERE a.onsite) AS onsite, count(*) FILTER (WHERE f.f = a.d) AS new
+          FROM a JOIN firsts f ON f.u = a.u
+         GROUP BY a.d
+      )
+      SELECT c.day::date::text AS day,
+             coalesce(daily.dau, 0) AS dau,
+             coalesce((SELECT r.active FROM running r WHERE r.n = 7 AND r.day <= c.day::date ORDER BY r.day DESC LIMIT 1), 0) AS wau,
+             coalesce((SELECT r.active FROM running r WHERE r.n = 30 AND r.day <= c.day::date ORDER BY r.day DESC LIMIT 1), 0) AS mau,
+             coalesce(daily.onsite, 0) AS onsite,
+             coalesce(daily.new, 0) AS "newAccounts",
+             coalesce(daily.dau - daily.new, 0) AS "returningAccounts"
+        FROM generate_series(${s.from}::date, ${s.to}::date, interval '1 day') AS c(day)
+        LEFT JOIN daily ON daily.d = c.day::date
+       ORDER BY c.day`;
+    return rows.map((r) => ({ ...r }));
+  }
+
+  async function periodCounts(s: Scope): Promise<PeriodCounts> {
+    const [row] = await sql<PeriodCounts[]>`
+      WITH firsts AS (${firstActive(s.tenantId, s.propertyId, s.to)}),
+      p AS (
+        SELECT g."userId" AS u, bool_or(g."onsiteForegroundEventCount" > 0) AS onsite
+          FROM analytics."guestDaily" g
+         WHERE ${inScope(s, 'g')} AND g."foregroundEventCount" > 0
+         GROUP BY g."userId"
+      )
+      SELECT count(*) AS "activeAccounts",
+             count(*) FILTER (WHERE f.f >= ${s.from}::date) AS "newAccounts",
+             count(*) FILTER (WHERE p.onsite) AS "onsiteAccounts"
+        FROM p JOIN firsts f ON f.u = p.u`;
+    return { ...row! };
+  }
+
+  /** New accounts in the period that came back within 7 and 30 days, where that window has fully passed. */
+  async function returnRates(s: Scope, asOf: string): Promise<ReturnRate[]> {
+    const rows = await sql<ReturnRate[]>`
+      WITH firsts AS (${firstActive(s.tenantId, s.propertyId, s.to)})
+      SELECT n.days,
+             count(*) FILTER (WHERE f.f + n.days < ${asOf}::date) AS eligible,
+             count(*) FILTER (WHERE f.f + n.days < ${asOf}::date AND EXISTS (
+               SELECT 1 FROM analytics."guestDaily" g
+                WHERE g."tenantId" = ${s.tenantId} AND g."propertyId" = ${s.propertyId} AND g."userId" = f.u
+                  AND g."foregroundEventCount" > 0 AND g."bucketDate" BETWEEN f.f + 1 AND f.f + n.days)) AS returned
+        FROM (VALUES (7), (30)) AS n(days)
+        LEFT JOIN firsts f ON f.f BETWEEN ${s.from}::date AND ${s.to}::date
+       GROUP BY n.days
+       ORDER BY n.days`;
+    return rows.map((r) => ({ ...r }));
+  }
+
+  /** Weekly cohorts (Monday weeks) first active in the period, and their activity in later weeks. */
+  async function cohorts(s: Scope, asOf: string): Promise<RetentionCohort[]> {
+    const rows = await sql<{ weekStart: string; week: number; accounts: number }[]>`
+      WITH firsts AS (${firstActive(s.tenantId, s.propertyId, asOf)}),
+      c AS (
+        SELECT u, date_trunc('week', f::timestamp)::date AS wk FROM firsts
+         WHERE date_trunc('week', f::timestamp)::date BETWEEN date_trunc('week', ${s.from}::date::timestamp)::date AND ${s.to}::date
+      ),
+      act AS (
+        SELECT DISTINCT g."userId" AS u, date_trunc('week', g."bucketDate"::timestamp)::date AS wk
+          FROM analytics."guestDaily" g
+         WHERE g."tenantId" = ${s.tenantId} AND g."propertyId" = ${s.propertyId} AND g."foregroundEventCount" > 0
+           AND g."bucketDate" >= date_trunc('week', ${s.from}::date::timestamp)::date AND g."bucketDate" <= ${asOf}::date
+      )
+      SELECT c.wk::text AS "weekStart", (act.wk - c.wk) / 7 AS week, count(*) AS accounts
+        FROM c JOIN act ON act.u = c.u AND act.wk >= c.wk
+       GROUP BY c.wk, act.wk
+       ORDER BY c.wk, act.wk`;
+    const byWeek = new Map<string, Map<number, number>>();
+    for (const r of rows) {
+      if (!byWeek.has(r.weekStart)) byWeek.set(r.weekStart, new Map());
+      byWeek.get(r.weekStart)!.set(r.week, r.accounts);
+    }
+    return [...byWeek].map(([weekStart, weeks]) => {
+      // Week n has started once weekStart + 7n <= asOf; it is complete once all 7 days are before asOf.
+      const started = Math.min(RETENTION_WEEKS, Math.floor(daysBetween(weekStart, asOf) / 7));
+      return {
+        weekStart,
+        size: weeks.get(0) ?? 0,
+        weeks: Array.from({ length: Math.max(0, started) + 1 }, (_, week) => ({
+          week,
+          accounts: weeks.get(week) ?? 0,
+          complete: daysBetween(weekStart, asOf) >= 7 * (week + 1),
+        })),
+      };
+    });
+  }
+
   return {
     async ping() {
       await sql`SELECT 1`;
@@ -142,6 +315,38 @@ export function createRepo(sql: Sql): AnalyticsRepo {
            ORDER BY coalesce(sum(e."eventCount"), 0) DESC, f.feature`,
       ]);
       return { kpis: current, previous: prior, daily: series, features: features.map((r) => ({ ...r })) };
+    },
+
+    async engagement(s, previous, asOf) {
+      const [series, prevSeries, counts, prevCounts, rates, features, cohortRows, background, history] = await Promise.all([
+        engagementSeries(s),
+        engagementSeries(previous),
+        periodCounts(s),
+        periodCounts(previous),
+        returnRates(s, asOf),
+        sql<{ feature: string; accounts: number }[]>`
+          SELECT f.feature, count(DISTINCT g."userId") AS accounts
+            FROM (SELECT DISTINCT feature FROM analytics."eventCatalog" WHERE feature IS NOT NULL AND "isActive") f
+            JOIN analytics."eventCatalog" c ON c.feature = f.feature AND c."isActive"
+            LEFT JOIN analytics."guestEventDaily" g ON g."eventId" = c."eventId" AND ${inScope(s, 'g')}
+           GROUP BY f.feature
+           ORDER BY accounts DESC, f.feature`,
+        cohorts(s, asOf),
+        sql<{ eventId: string }[]>`SELECT "eventId" FROM analytics."eventCatalog" WHERE NOT "isForeground" ORDER BY "eventId"`,
+        sql<{ start: string | null }[]>`
+          SELECT min("bucketDate")::text AS start FROM analytics."guestDaily"
+           WHERE "tenantId" = ${s.tenantId} AND "propertyId" = ${s.propertyId}`,
+      ]);
+      return {
+        summary: summarize(series, counts),
+        previous: summarize(prevSeries, prevCounts),
+        daily: series,
+        returnRates: rates,
+        features: features.map((r) => ({ ...r })),
+        cohorts: cohortRows,
+        backgroundEvents: background.map((r) => r.eventId),
+        historyStart: history[0]?.start ?? null,
+      };
     },
 
     async marketing(s) {

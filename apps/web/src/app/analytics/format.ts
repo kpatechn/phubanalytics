@@ -52,3 +52,15 @@ export function delta(current: number, previous: number, higherIsBetter: boolean
     good: higherIsBetter === null ? null : (change > 0) === higherIsBetter,
   };
 }
+
+/** Change of a ratio in percentage points, e.g. "+2.1 pts vs prior period". */
+export function deltaPoints(current: number | null, previous: number | null): Delta | null {
+  if (current === null || previous === null) return null;
+  const points = (current - previous) * 100;
+  if (Math.abs(points) < 0.05) return { text: 'no change', direction: 'flat', good: null };
+  return {
+    text: `${points > 0 ? '+' : '−'}${oneDecimal.format(Math.abs(points))} pts vs prior period`,
+    direction: points > 0 ? 'up' : 'down',
+    good: points > 0,
+  };
+}

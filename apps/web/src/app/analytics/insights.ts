@@ -1,4 +1,4 @@
-import type { ExecutiveData, ItData, MarketingData } from '@phub/contracts';
+import type { EngagementData, ExecutiveData, ItData, MarketingData } from '@phub/contracts';
 import { fmtInt, fmtPct, fmtRate } from './format';
 
 // Insight rules: pure functions of one view's data. Thresholds and minimum
@@ -24,6 +24,7 @@ export const INSIGHT_CONFIG = {
   deletesOverReads: { minEvents: 10 },
   denialsSkipped: { minDenials: 10, share: 0.5 },
   ctaGap: { minOpened: 20 },
+  engagement: { minAccounts: 20, weekReturnTarget: 0.25, newShare: 0.5 },
 };
 
 export type InsightConfig = typeof INSIGHT_CONFIG;
@@ -107,5 +108,37 @@ export function marketingInsights(d: MarketingData, c: InsightConfig = INSIGHT_C
   if (opened >= c.ctaGap.minOpened && ctaCompleted === 0) {
     out.push({ id: 'cta-gap', severity: 'warn', title: 'No CTA completions recorded', detail: `0 of ${fmtInt(opened)} opened messages completed their call to action. Likely a tracking gap: check that the app sets is_cta_completed.` });
   }
+  return out;
+}
+
+export function engagementInsights(d: EngagementData, c: InsightConfig = INSIGHT_CONFIG): Insight[] {
+  const out: Insight[] = [];
+  const { activeAccounts, newAccounts, onsiteAccounts, mau, wauMau } = d.summary;
+  const min = c.engagement.minAccounts;
+
+  if (activeAccounts < min) {
+    out.push({ id: 'small-sample', severity: 'info', title: `Only ${fmtInt(activeAccounts)} active accounts`, detail: `Ratios and retention need at least ${fmtInt(min)} accounts to mean much, so most insights are held back.` });
+    return out;
+  }
+
+  if (mau >= min && wauMau !== null) {
+    out.push({ id: 'stickiness', severity: 'info', title: `WAU/MAU ${fmtPct(wauMau, 1)}`, detail: `In a typical week, ${fmtPct(wauMau, 1)} of the month's active accounts used the app.` });
+  }
+
+  const week = d.returnRates.find((r) => r.days === 7);
+  if (week && week.eligible >= min) {
+    const rate = week.returned / week.eligible;
+    out.push(
+      rate >= c.engagement.weekReturnTarget
+        ? { id: 'week-return', severity: 'good', title: `${fmtPct(week.returned, week.eligible)} of new accounts came back within a week`, detail: `${fmtInt(week.returned)} of ${fmtInt(week.eligible)} new accounts were active again within 7 days.` }
+        : { id: 'week-return', severity: 'warn', title: `Only ${fmtPct(week.returned, week.eligible)} of new accounts came back within a week`, detail: `${fmtInt(week.returned)} of ${fmtInt(week.eligible)} new accounts were active again within 7 days (target ${fmtPct(c.engagement.weekReturnTarget, 1)}).` },
+    );
+  }
+
+  if (newAccounts / activeAccounts > c.engagement.newShare) {
+    out.push({ id: 'mostly-new', severity: 'info', title: `Most active accounts are new (${fmtPct(newAccounts, activeAccounts)})`, detail: `${fmtInt(newAccounts)} of ${fmtInt(activeAccounts)} active accounts were first seen in this period.` });
+  }
+
+  out.push({ id: 'onsite-share', severity: 'info', title: `${fmtPct(onsiteAccounts, activeAccounts)} of active accounts used the app on property`, detail: `${fmtInt(onsiteAccounts)} of ${fmtInt(activeAccounts)} accounts had at least one foreground event on property.` });
   return out;
 }

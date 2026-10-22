@@ -1,6 +1,6 @@
 # PlayerHub App Analytics
 
-Executive, Marketing and IT & Operations dashboards for the PlayerHub mobile app, built on the `dexl.analytics` rollups.
+Executive, Engagement, Marketing and IT & Operations dashboards for the PlayerHub mobile app, built on the `dexl.analytics` rollups.
 
 | Path | What it is |
 |---|---|
@@ -40,16 +40,17 @@ npm test
 npm run test:integration -w @phub/api
 ```
 
-`npm test` runs the API tests (auth 401/403/200, validation, caching, date ranges) and the insight-rule tests (below minimum sample, at threshold, above). The integration test reads the plan's golden values for 2026-09-03 to 2026-10-02 from Graton dev through the API's own queries.
+`npm test` runs the API tests (auth 401/403/200, validation, caching, date ranges) and the insight-rule tests (below minimum sample, at threshold, above). The integration test reads the plan's golden values for 2026-09-03 to 2026-10-02 from Graton dev through the API's own queries, and recounts DAU, WAU, MAU and new accounts for every day straight from raw events.
 
 ## API
 
-`GET /api/analytics/{executive|marketing|it}?from=YYYY-MM-DD&to=YYYY-MM-DD&property=1500001`
+`GET /api/analytics/{executive|engagement|marketing|it}?from=YYYY-MM-DD&to=YYYY-MM-DD&property=1500001`
 
 - **Range:** dates are inclusive, in the property's time zone. With no dates, the last 30 days. The maximum is 366 days.
 - **Response:** `{ meta, data }`. `meta` carries the range, the previous period (for deltas), the property, `dataAsOf` and `lastRefreshAt`.
 - **Errors:** `application/problem+json`.
-- **Roles:** `analytics:exec`, `analytics:marketing`, `analytics:it`; `analytics:admin` passes every check.
+- **Roles:** `analytics:exec` (Executive and Engagement), `analytics:marketing`, `analytics:it`; `analytics:admin` passes every check.
+- **Engagement:** DAU, trailing WAU (7 days) and MAU (30 days), DAU/MAU and WAU/MAU, new vs returning, weekly retention cohorts, feature reach and on-property active accounts. Active means at least one foreground event (see [db/README.md](db/README.md)).
 - **Caching:** 60 s in memory, plus `Cache-Control` and an `ETag`.
 
 Also: `GET /api/analytics/me`, `GET /api/analytics/properties`, `GET /healthz`, `GET /readyz` (503 when the rollups haven't refreshed for 30 minutes).

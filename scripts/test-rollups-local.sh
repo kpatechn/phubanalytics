@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Tests db/migrations/001_analytics_rollups.sql on a throwaway local database:
-# copies the dev schema (old analytics pipeline included) and a scrubbed copy of
-# dev events, migrates, rebuilds, runs db/tests/rollup_checks.sql, then checks
+# Tests a fresh install of db/migrations/*.sql on a throwaway local database:
+# copies the dev raw events table (definition only) and a scrubbed copy of its
+# events, applies every migration and seed, rebuilds, runs db/tests/rollup_checks.sql, then checks
 # idempotency, late events, deletes, DST, exclusions, a failing queue and
 # concurrent refreshes. The dev database is only read.
 #
@@ -33,7 +33,7 @@ ROLLUP_HASH="SELECT md5(string_agg(x, '|' ORDER BY x)) FROM (
     UNION ALL SELECT 'h' || row(\"tenantId\", \"propertyId\", \"bucketDate\", \"hourOfDay\", \"eventId\", \"locationContext\", \"eventCount\")::text FROM analytics.\"eventHourly\"
     UNION ALL SELECT 'x' || row(\"tenantId\", \"propertyId\", \"bucketDate\", \"eventId\", \"dimensionType\", \"dimensionValue\", \"eventCount\", \"numericValueSum\", \"numericValueCount\")::text FROM analytics.\"eventDimensionDaily\"
     UNION ALL SELECT 'e' || row(\"tenantId\", \"propertyId\", \"bucketDate\", endpoint, method, \"statusCode\", \"errorType\", \"errorCode\", message, \"eventCount\")::text FROM analytics.\"apiErrorDaily\"
-    UNION ALL SELECT 'g' || row(\"tenantId\", \"propertyId\", \"bucketDate\", \"userId\", \"eventCount\", \"sessionCount\", \"onsiteEventCount\", \"offsiteEventCount\", \"firstEventAt\", \"lastEventAt\")::text FROM analytics.\"guestDaily\"
+    UNION ALL SELECT 'g' || row(\"tenantId\", \"propertyId\", \"bucketDate\", \"userId\", \"eventCount\", \"sessionCount\", \"onsiteEventCount\", \"offsiteEventCount\", \"foregroundEventCount\", \"onsiteForegroundEventCount\", \"firstEventAt\", \"lastEventAt\")::text FROM analytics.\"guestDaily\"
     UNION ALL SELECT 'u' || row(\"tenantId\", \"propertyId\", \"bucketDate\", \"userId\", \"eventId\", \"eventCount\")::text FROM analytics.\"guestEventDaily\"
 ) s"
 rollup_hash() { loc -At -c "$ROLLUP_HASH"; }
@@ -52,17 +52,11 @@ dropdb -h "$LOCAL_HOST" -p "$LOCAL_PORT" --if-exists "$TEST_DB"
 createdb -h "$LOCAL_HOST" -p "$LOCAL_PORT" "$TEST_DB"
 loc -c "SELECT version()" -At
 
-step "Copy dev schema: data.\"dexAnalytics\" and the current analytics schema"
+step "Copy the dev raw events table definition (the migrations create everything else)"
 PGOPTIONS='-c default_transaction_read_only=on' pg_dump "$DEV" -w --schema-only --no-owner --no-privileges -t 'data."dexAnalytics"' \
-    | grep -vE '^\\(un)?restrict ' > "$WORK/table.sql"
-PGOPTIONS='-c default_transaction_read_only=on' pg_dump "$DEV" -w --schema-only --no-owner --no-privileges -n analytics \
-    | grep -vE '^\\(un)?restrict ' > "$WORK/analytics.sql"
-grep -v '^CREATE TRIGGER' "$WORK/table.sql" > "$WORK/table_no_trigger.sql"
-grep '^CREATE TRIGGER' "$WORK/table.sql" > "$WORK/triggers.sql" || true
+    | grep -vE '^\\(un)?restrict ' | grep -v '^CREATE TRIGGER' > "$WORK/table.sql"
 loc -c 'CREATE SCHEMA data'
-loc -f "$WORK/table_no_trigger.sql" >/dev/null
-loc -f "$WORK/analytics.sql" >/dev/null
-loc -f "$WORK/triggers.sql" >/dev/null
+loc -f "$WORK/table.sql" >/dev/null
 
 step "Copy dev events, scrubbed (no URL query strings, account numbers, coordinates or raw payloads)"
 dev -c "COPY (
@@ -80,8 +74,11 @@ loc -c "COPY data.\"dexAnalytics\" (id, \"propertyId\", \"tenantId\", \"sessionI
 rm -f "$WORK/events.csv"
 loc -At -c "SELECT count(*) || ' events copied' FROM data.\"dexAnalytics\""
 
-step "Apply migration and seeds"
-loc -f "$ROOT/db/migrations/001_analytics_rollups.sql"
+step "Apply migrations and seeds"
+for migration in "$ROOT"/db/migrations/*.sql; do
+    echo "  $(basename "$migration")"
+    loc -f "$migration"
+done
 loc -f "$ROOT/db/seeds/001_event_catalog.sql"
 loc -f "$ROOT/db/seeds/graton_dev_property.sql"
 loc -At -c "SELECT count(*) || ' hours queued' FROM analytics.\"refreshQueue\""

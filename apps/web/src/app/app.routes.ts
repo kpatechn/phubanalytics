@@ -17,6 +17,13 @@ export const routes: Routes = [
         loadComponent: () => import('./analytics/executive/executive').then((m) => m.ExecutivePage),
       },
       {
+        path: 'engagement',
+        title: 'Engagement · PlayerHub Analytics',
+        data: { view: 'engagement' },
+        canMatch: [viewGuard],
+        loadComponent: () => import('./analytics/engagement/engagement').then((m) => m.EngagementPage),
+      },
+      {
         path: 'marketing',
         title: 'Marketing · PlayerHub Analytics',
         data: { view: 'marketing' },

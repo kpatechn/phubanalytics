@@ -3,7 +3,7 @@
 // name says guests or accounts.
 
 export type Environment = 'prod' | 'staging' | 'dev';
-export type View = 'executive' | 'marketing' | 'it';
+export type View = 'executive' | 'engagement' | 'marketing' | 'it';
 export type Role = 'analytics:exec' | 'analytics:marketing' | 'analytics:it' | 'analytics:admin';
 
 export interface Property {
@@ -122,6 +122,71 @@ export interface ItData {
   pushReceived: number;
 }
 
+/**
+ * Active accounts: accounts with at least one foreground event that day
+ * (eventCatalog.isForeground). Windows are trailing: WAU on a day covers that
+ * day and the 6 before, MAU that day and the 29 before.
+ */
+export interface EngagementPoint {
+  day: string;
+  dau: number;
+  wau: number;
+  mau: number;
+  /** Active accounts with a foreground event on property. */
+  onsite: number;
+  /** Accounts whose first active day ever is this day. */
+  newAccounts: number;
+  returningAccounts: number;
+}
+
+export interface EngagementSummary {
+  /** Average daily active accounts over the period. */
+  dau: number;
+  /** Average trailing-7-day active accounts over the period. */
+  wau: number;
+  /** Trailing-30-day active accounts on the last day of the period. */
+  mau: number;
+  /** Average of the daily DAU/MAU ratio; null when MAU is 0 every day. */
+  dauMau: number | null;
+  wauMau: number | null;
+  /** Distinct active accounts in the period. */
+  activeAccounts: number;
+  newAccounts: number;
+  returningAccounts: number;
+  /** Distinct accounts active on property at least once in the period. */
+  onsiteAccounts: number;
+}
+
+/** New accounts in the period whose follow-up window has fully passed, and how many came back in it. */
+export interface ReturnRate {
+  days: number;
+  eligible: number;
+  returned: number;
+}
+
+export interface RetentionCohort {
+  /** Monday of the week the accounts were first active. */
+  weekStart: string;
+  size: number;
+  /** weeks[n]: accounts active again in week n after the cohort week (n = 0 is the cohort week). */
+  weeks: { week: number; accounts: number; complete: boolean }[];
+}
+
+export interface EngagementData {
+  summary: EngagementSummary;
+  previous: EngagementSummary;
+  daily: EngagementPoint[];
+  returnRates: ReturnRate[];
+  /** Accounts that used each feature in the period. */
+  features: { feature: string; accounts: number }[];
+  cohorts: RetentionCohort[];
+  /** Events that never count as activity (eventCatalog.isForeground = false). */
+  backgroundEvents: string[];
+  /** First day with any history: "new" means first seen since this day. */
+  historyStart: string | null;
+}
+
 export type ExecutiveResponse = Envelope<ExecutiveData>;
+export type EngagementResponse = Envelope<EngagementData>;
 export type MarketingResponse = Envelope<MarketingData>;
 export type ItResponse = Envelope<ItData>;

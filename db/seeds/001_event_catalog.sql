@@ -71,6 +71,21 @@ INSERT INTO analytics."eventCatalog" ("eventId", "displayName", category, featur
     -- Errors
     ('api_error',                         'API error',                          'error',      NULL);
 
+-- Events that fire without the guest using the app: not counted as activity
+-- (same list as migration 002).
+UPDATE analytics."eventCatalog" SET "isForeground" = false
+ WHERE "eventId" IN (
+    'geofence_entered',
+    'geofence_exited',
+    'push_device_handled',
+    'app_backgrounded',
+    'session_ended',
+    'api_error',
+    'notification_permission_granted',
+    'notification_permission_changed',
+    'location_permission_granted',
+    'bluetooth_permission_granted');
+
 INSERT INTO analytics."dimensionRule" ("eventId", "dimensionType", "sourceKey", "numericKey") VALUES
     ('page_open',                      'screen',         'screen_name',       NULL),
     ('button_clicked',                 'button',         '@mobileName',       NULL),

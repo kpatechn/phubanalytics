@@ -7,6 +7,7 @@ Raw app events land in `data."dexAnalytics"` (written by the ingest service). Ev
 | Path | What it is |
 |---|---|
 | `migrations/001_analytics_rollups.sql` | Replaces the first-generation `analytics` objects with the design below |
+| `migrations/002_engagement.sql` | Foreground flag on the event catalog and active-account columns on `guestDaily` (DAU/WAU/MAU) |
 | `seeds/001_event_catalog.sql` | Event display names, categories, feature map, dimension rules (all environments) |
 | `seeds/graton_dev_property.sql` | Graton dev property row. Inserting it queues its whole history |
 | `tests/rollup_checks.sql` | Golden values from the plan plus raw-vs-rollup invariants. Read-only |
@@ -42,21 +43,24 @@ data."dexAnalytics"  --(insert/update/delete trigger)-->  analytics."refreshQueu
 | `eventHourly` | day, local hour, event, on/off-site | Hour-of-day activity |
 | `eventDimensionDaily` | day, event, dimension, value | Screens, message titles, campaigns, denial types, geofences, web pages (with average time), auth methods |
 | `apiErrorDaily` | day, endpoint, method, status, type, code, message | IT errors. Endpoints and messages normalized, credentials redacted |
-| `guestDaily` | day, account | DAU/MAU, retention, sessions per guest. **Contains account IDs** |
+| `guestDaily` | day, account | DAU/WAU/MAU, new vs returning, retention, on-property active. **Contains account IDs** |
 | `guestEventDaily` | day, account, event | Distinct guests per event or feature over any range. **Contains account IDs** |
 | `refreshQueue`, `refreshRun`, view `refreshStatus` | | Refresh bookkeeping and health (`/readyz`, "data as of") |
+
+An account is **active** on a day when `guestDaily."foregroundEventCount" > 0`: at least one event whose catalog entry has `"isForeground"`. Geofence triggers, push receipts, backgrounding, permission status checks and API errors are not foreground; events missing from the catalog never count. Changing `"isForeground"` rebuilds history.
 
 Guests are identified by `"userId"` (the dex account). The plan's "13 accounts" counted `attributes.player_id`, which mixes card numbers and account IDs; by account it is 8.
 
 ## Deploy to an environment
 
-Deployed to Graton dev on 2026-10-22 (all checks pass). Scheduled the same day with pg_cron:
+Deployed to Graton dev on 2026-10-22: migrations 001 and 002, all checks pass. Scheduled the same day with pg_cron:
 - **Parameter group:** `playerhub-phub-graton-dev-uw2-pg-pg`, used only by this instance. `shared_preload_libraries = pg_stat_statements,pg_tle,pg_cron` and `cron.database_name = dexl`.
 - **Jobs:** `analytics-refresh` every 5 minutes, and `cron-history-purge` daily.
 - **Verified:** the first scheduled run (18:25 UTC) rebuilt 3 queued days.
 
 ```bash
 psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/migrations/001_analytics_rollups.sql
+psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/migrations/002_engagement.sql
 psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/seeds/001_event_catalog.sql
 psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/seeds/graton_dev_property.sql
 psql "service=graton-dev dbname=dexl" -c 'CALL analytics."refreshRollups"()'
