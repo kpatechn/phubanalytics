@@ -13,6 +13,7 @@ import type {
   ReturnRate,
 } from '@phub/contracts';
 import type { Sql } from './db.js';
+import { platformQueries } from './platform.js';
 
 // Every query reads the analytics rollups (database dexl, schema analytics),
 // never raw events. Days are property-local bucketDate values, inclusive.
@@ -29,6 +30,7 @@ export interface Freshness {
   lastSuccessAt: Date | null;
   queuedHours: number;
   oldestQueuedAt: Date | null;
+  dextransRefreshedAt: Date | null;
 }
 
 export interface AnalyticsRepo {
@@ -81,6 +83,7 @@ interface DimensionRow {
 }
 
 export function createRepo(sql: Sql): AnalyticsRepo {
+  const platform = platformQueries(sql);
   const inScope = (s: Scope, alias: string) =>
     sql`${sql(alias)}."tenantId" = ${s.tenantId} AND ${sql(alias)}."propertyId" = ${s.propertyId}
         AND ${sql(alias)}."bucketDate" BETWEEN ${s.from}::date AND ${s.to}::date`;
@@ -292,10 +295,10 @@ export function createRepo(sql: Sql): AnalyticsRepo {
 
     async freshness(p) {
       const [row] = await sql<Freshness[]>`
-        SELECT "latestEventAt", "lastSuccessAt", "queuedHours", "oldestQueuedAt"
+        SELECT "latestEventAt", "lastSuccessAt", "queuedHours", "oldestQueuedAt", "dextransRefreshedAt"
           FROM analytics."refreshStatus"
          WHERE "tenantId" = ${p.tenantId} AND "propertyId" = ${p.propertyId}`;
-      return row ? { ...row } : { latestEventAt: null, lastSuccessAt: null, queuedHours: 0, oldestQueuedAt: null };
+      return row ? { ...row } : { latestEventAt: null, lastSuccessAt: null, queuedHours: 0, oldestQueuedAt: null, dextransRefreshedAt: null };
     },
 
     async executive(s, previous) {
@@ -318,7 +321,7 @@ export function createRepo(sql: Sql): AnalyticsRepo {
     },
 
     async engagement(s, previous, asOf) {
-      const [series, prevSeries, counts, prevCounts, rates, features, cohortRows, background, history] = await Promise.all([
+      const [series, prevSeries, counts, prevCounts, rates, features, cohortRows, background, history, tiers, featureTiers, platforms] = await Promise.all([
         engagementSeries(s),
         engagementSeries(previous),
         periodCounts(s),
@@ -336,6 +339,9 @@ export function createRepo(sql: Sql): AnalyticsRepo {
         sql<{ start: string | null }[]>`
           SELECT min("bucketDate")::text AS start FROM analytics."guestDaily"
            WHERE "tenantId" = ${s.tenantId} AND "propertyId" = ${s.propertyId}`,
+        platform.tiers(s),
+        platform.featureTiers(s),
+        platform.platforms(s),
       ]);
       return {
         summary: summarize(series, counts),
@@ -346,11 +352,14 @@ export function createRepo(sql: Sql): AnalyticsRepo {
         cohorts: cohortRows,
         backgroundEvents: background.map((r) => r.eventId),
         historyStart: history[0]?.start ?? null,
+        tiers,
+        featureTiers,
+        platforms,
       };
     },
 
     async marketing(s) {
-      const [c, cta, campaigns, messages, denials, geofences, web, promotions, events, drawings] = await Promise.all([
+      const [c, cta, campaigns, messages, denials, geofences, web, promotions, events, drawings, delivery, campaignResults] = await Promise.all([
         counts(s, {
           inboxViewed: 'notification_list_viewed',
           opened: 'notification_details_viewed',
@@ -382,6 +391,8 @@ export function createRepo(sql: Sql): AnalyticsRepo {
         dimension(s, ['promotion_details_viewed'], 'promotion', 10),
         dimension(s, ['event_details_viewed'], 'event', 10),
         dimension(s, ['live_drawing_viewed'], 'drawing', 10),
+        platform.delivery(s),
+        platform.campaignResults(s),
       ]);
       return {
         funnel: {
@@ -408,11 +419,13 @@ export function createRepo(sql: Sql): AnalyticsRepo {
           ...events.map((r) => ({ kind: 'event' as const, label: r.value, views: r.count, avgSeconds: r.avgSeconds })),
           ...drawings.map((r) => ({ kind: 'drawing' as const, label: r.value, views: r.count, avgSeconds: r.avgSeconds })),
         ],
+        delivery,
+        campaignResults,
       };
     },
 
     async it(s) {
-      const [errors, messages, series, hourly, screens, c, authMethods] = await Promise.all([
+      const [errors, messages, series, hourly, screens, c, authMethods, versions, sessionLength, platforms, deviceModels, delivery, jobs] = await Promise.all([
         sql<ItData['errors']>`
           SELECT endpoint, method, "statusCode", "errorType", sum("eventCount") AS count
             FROM analytics."apiErrorDaily" a
@@ -444,6 +457,12 @@ export function createRepo(sql: Sql): AnalyticsRepo {
           pushReceived: 'push_device_handled',
         }),
         dimension(s, ['login_completed'], 'auth_method', null),
+        platform.versions(s),
+        platform.sessionLength(s),
+        platform.platforms(s),
+        platform.deviceModels(s),
+        platform.delivery(s),
+        platform.jobs(s),
       ]);
       return {
         errors: errors.map((r) => ({ ...r })),
@@ -458,6 +477,13 @@ export function createRepo(sql: Sql): AnalyticsRepo {
           authMethods: authMethods.map((r) => ({ method: r.value, count: r.count })),
         },
         pushReceived: c.pushReceived,
+        versions,
+        sessionLength,
+        platforms,
+        deviceModels,
+        delivery,
+        jobs: jobs.jobs,
+        jobDaily: jobs.daily,
       };
     },
   };

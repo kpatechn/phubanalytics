@@ -15,7 +15,7 @@ function fakeRepo(): AnalyticsRepo & { calls: Record<string, number> } {
     calls,
     ping: async () => {},
     properties: async () => [property],
-    freshness: async () => ({ latestEventAt: new Date('2026-10-21T23:24:53Z'), lastSuccessAt: new Date('2026-10-22T17:55:00Z'), queuedHours: 0, oldestQueuedAt: null }),
+    freshness: async () => ({ latestEventAt: new Date('2026-10-21T23:24:53Z'), lastSuccessAt: new Date('2026-10-22T17:55:00Z'), queuedHours: 0, oldestQueuedAt: null, dextransRefreshedAt: new Date('2026-10-22T17:45:00Z') }),
     executive: async () => {
       calls['executive']!++;
       return { kpis: { ...zeroKpis, sessions: 186 }, previous: zeroKpis, daily: [], features: [] } satisfies ExecutiveData;
@@ -109,6 +109,7 @@ describe('analytics API', () => {
       source: 'rollup',
       property: { propertyId: 1500001, timeZone: 'America/Los_Angeles' },
       dataAsOf: '2026-10-21T23:24:53.000Z',
+      dextransAsOf: '2026-10-22T17:45:00.000Z',
     });
     expect(body.data.kpis.sessions).toBe(186);
     expect(res.headers['cache-control']).toBe('private, max-age=300');
@@ -165,7 +166,7 @@ describe('analytics API', () => {
   it('reports stale when the last refresh is too old', async () => {
     const stale = await buildApp({
       config: { AUTH_MODE: 'jwt', ALLOWED_ORIGIN: undefined },
-      repo: { ...fakeRepo(), freshness: vi.fn(async () => ({ latestEventAt: null, lastSuccessAt: new Date('2026-10-22T16:00:00Z'), queuedHours: 3, oldestQueuedAt: null })) },
+      repo: { ...fakeRepo(), freshness: vi.fn(async () => ({ latestEventAt: null, lastSuccessAt: new Date('2026-10-22T16:00:00Z'), queuedHours: 3, oldestQueuedAt: null, dextransRefreshedAt: null })) },
       now,
       authenticate: async () => null,
     });

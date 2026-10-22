@@ -86,6 +86,34 @@ describe.skipIf(!url)('golden values from Graton dev rollups', () => {
     expect(e.backgroundEvents).toContain('geofence_entered');
   });
 
+  it('platform data matches direct counts through the dextrans link', async () => {
+    const [t, m, e] = await Promise.all([repo.it(scope), repo.marketing(scope), repo.engagement(scope, previous, '2026-10-22')]);
+    const tz = 'America/Los_Angeles';
+    const [direct] = await sql<{ sessions: number; sends: number; failed: number; sent: number; runs: number }[]>`
+      SELECT
+        (SELECT count(*) FROM dextrans."userSessions" s WHERE s."tenantId" = 15001 AND s."propertyId" = 1500001
+            AND (s."startedAtUtc" AT TIME ZONE ${tz})::date BETWEEN ${scope.from}::date AND ${scope.to}::date) AS sessions,
+        (SELECT count(*) FROM dextrans."apnLogs" a WHERE a."tenantId" = 15001 AND a."propertyId" = 1500001
+            AND ((a."notifiedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz})::date BETWEEN ${scope.from}::date AND ${scope.to}::date) AS sends,
+        (SELECT count(*) FROM dextrans."apnLogs" a WHERE a."tenantId" = 15001 AND a."propertyId" = 1500001 AND upper(a.status) = 'FAILED'
+            AND ((a."notifiedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz})::date BETWEEN ${scope.from}::date AND ${scope.to}::date) AS failed,
+        (SELECT count(*) FROM dextrans."campaignStats" c WHERE c."tenantId" = 15001 AND c."propertyId" = 1500001
+            AND (c."sentAt" AT TIME ZONE ${tz})::date BETWEEN ${scope.from}::date AND ${scope.to}::date) AS sent,
+        (SELECT count(*) FROM dextrans."jobStatus" j WHERE j."tenantId" = 15001 AND j."propertyId" = 1500001
+            AND (j."startTime" AT TIME ZONE ${tz})::date BETWEEN ${scope.from}::date AND ${scope.to}::date) AS runs`;
+    const sum = <T>(rows: T[], pick: (r: T) => number) => rows.reduce((n, r) => n + pick(r), 0);
+    expect(sum(t.versions, (v) => v.sessions)).toBe(direct!.sessions);
+    expect(sum(t.sessionLength, (l) => l.sessions)).toBe(direct!.sessions);
+    expect(sum(t.delivery.byType, (d) => d.sent)).toBe(direct!.sends);
+    expect(sum(m.delivery.byType, (d) => d.failed)).toBe(direct!.failed);
+    expect(sum(m.delivery.reasons, (r) => r.count)).toBeLessThanOrEqual(direct!.failed);
+    expect(sum(m.campaignResults, (c) => c.sent)).toBe(direct!.sent);
+    expect(sum(t.jobs, (j) => j.runs)).toBe(direct!.runs);
+    expect(sum(e.tiers, (x) => x.activeAccounts)).toBe(e.summary.activeAccounts);
+    expect(sum(t.versions, (v) => v.events)).toBe(3494);
+    for (const r of m.delivery.reasons) expect(r.reason).not.toMatch(/[0-9]{4,}/);
+  });
+
   it('it', async () => {
     const t = await repo.it(scope);
     const byEndpoint = (needle: string) => t.errors.filter((e) => e.endpoint.includes(needle)).reduce((n, e) => n + e.count, 0);

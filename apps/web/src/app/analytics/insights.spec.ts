@@ -41,8 +41,10 @@ describe('executive insights', () => {
   });
 });
 
-const it_ = (errors: ItData['errors'], biometrics = { passed: 0, failed: 0 }): ItData => ({
+const noDelivery = { byType: [], reasons: [], daily: [] };
+const it_ = (errors: ItData['errors'], biometrics = { passed: 0, failed: 0 }, over: Partial<ItData> = {}): ItData => ({
   errors, topMessages: [], daily: [], hourly: [], screens: [], biometrics, logins: { started: 0, succeeded: 0, authMethods: [] }, pushReceived: 0,
+  versions: [], sessionLength: [], platforms: [], deviceModels: [], delivery: noDelivery, jobs: [], jobDaily: [], ...over,
 });
 const err = (endpoint: string, statusCode: string, count: number) => ({ endpoint, method: 'POST', statusCode, errorType: 'badResponse', count });
 
@@ -75,6 +77,7 @@ describe('IT insights', () => {
 const mkt = (over: Partial<MarketingData> = {}): MarketingData => ({
   funnel: { inboxViewed: 0, opened: 0, markedRead: 0, ctaCompleted: 0, deleted: 0, pushReceived: 0, pushOpened: 0 },
   campaigns: [], topMessages: [], permissions: { granted: 0, denied: 0, denialTypes: [] }, geofences: [], geofenceExits: 0, webContent: [], contentViews: [],
+  delivery: noDelivery, campaignResults: [],
   ...over,
 });
 
@@ -113,6 +116,7 @@ const summary = (over: Partial<EngagementSummary> = {}): EngagementSummary => ({
 });
 const engagement = (over: Partial<EngagementSummary> = {}, week = { eligible: 0, returned: 0 }): EngagementData => ({
   summary: summary(over), previous: summary(), daily: [], features: [], cohorts: [], backgroundEvents: [], historyStart: null,
+  tiers: [], featureTiers: [], platforms: [],
   returnRates: [{ days: 7, ...week }, { days: 30, eligible: 0, returned: 0 }],
 });
 
@@ -136,5 +140,62 @@ describe('engagement insights', () => {
   it('mostly new: above half of active accounts, not at exactly half', () => {
     expect(ids(engagementInsights(engagement({ activeAccounts: 20, newAccounts: 11 })))).toContain('mostly-new');
     expect(ids(engagementInsights(engagement({ activeAccounts: 20, newAccounts: 10 })))).not.toContain('mostly-new');
+  });
+});
+
+const delivery = (sent: number, failed: number) => ({
+  byType: [{ messageType: 'sendApn', sent, delivered: sent - failed, failed, other: 0 }],
+  reasons: [{ reason: 'Device token is unavailable', count: failed }],
+  daily: [],
+});
+const job = (jobName: string, runs: number, failed: number, stuck = 0, isTest = false) => ({
+  jobName, isTest, runs, completed: runs - failed - stuck, failed, stuck, running: 0, avgSeconds: 1, maxSeconds: 2, lastStartAt: null, lastStatus: 'completed',
+});
+const version = (appVersion: string, sessions: number, errors: number, accounts = 10, isLatest = false) => ({
+  platform: 'ios', appVersion, sessions, accounts, events: sessions * 10, errors, isLatest,
+});
+
+describe('platform insights', () => {
+  it('send failures: silent below 100 sends or under 20%, bad at 20% of 100', () => {
+    expect(ids(itInsights(it_([], undefined, { delivery: delivery(99, 99) })))).not.toContain('send-failures');
+    expect(ids(itInsights(it_([], undefined, { delivery: delivery(100, 19) })))).not.toContain('send-failures');
+    const hit = find(itInsights(it_([], undefined, { delivery: delivery(100, 20) })), 'send-failures');
+    expect(hit?.severity).toBe('bad');
+    expect(hit?.detail).toContain('Device token is unavailable');
+    expect(ids(marketingInsights(mkt({ delivery: delivery(100, 20) })))).toContain('send-failures');
+  });
+
+  it('stuck jobs: any stuck run in a non-test job; test jobs ignored', () => {
+    expect(find(itInsights(it_([], undefined, { jobs: [job('checkIn', 50, 0, 1)] })), 'stuck-jobs')?.severity).toBe('bad');
+    expect(ids(itInsights(it_([], undefined, { jobs: [job('Dev Test-6', 50, 0, 5, true)] })))).not.toContain('stuck-jobs');
+  });
+
+  it('job failures: 5% of 20+ runs', () => {
+    expect(ids(itInsights(it_([], undefined, { jobs: [job('checkIn', 19, 19)] })))).not.toContain('job-failures');
+    expect(ids(itInsights(it_([], undefined, { jobs: [job('checkIn', 20, 1)] })))).toContain('job-failures');
+    expect(ids(itInsights(it_([], undefined, { jobs: [job('checkIn', 100, 4)] })))).not.toContain('job-failures');
+  });
+
+  it('version errors: a version at 2x the average with 20+ sessions', () => {
+    // Overall 30 errors / 200 sessions = 15 per 100; 1.0.5 has 20 / 40 = 50 per 100 (3.3x).
+    const bad = itInsights(it_([], undefined, { versions: [version('1.2.0', 160, 10, 10, true), version('1.0.5', 40, 20)] }));
+    expect(find(bad, 'version-errors')?.title).toContain('1.0.5');
+    // Same rate but only 19 sessions: silent.
+    expect(ids(itInsights(it_([], undefined, { versions: [version('1.2.0', 160, 10, 10, true), version('1.0.5', 19, 10)] })))).not.toContain('version-errors');
+  });
+
+  it('old versions: 30% of 20+ accounts not on the latest version', () => {
+    expect(ids(itInsights(it_([], undefined, { versions: [version('1.2.0', 50, 0, 14, true), version('1.0.5', 50, 0, 6)] })))).toContain('old-versions');
+    expect(ids(itInsights(it_([], undefined, { versions: [version('1.2.0', 50, 0, 15, true), version('1.0.5', 50, 0, 5)] })))).not.toContain('old-versions');
+  });
+
+  it('campaign delivery: under half of 100+ non-test messages confirmed delivered', () => {
+    const result = (sent: number, delivered: number, isTest = false) => ({
+      campaignId: 'c', name: 'Daily schedule', category: 'marketing', status: 'completed', targetType: 'player', isTest, channel: 'apn',
+      sent, delivered, opened: 0, clicked: 0, converted: 0, unsubscribed: 0,
+    });
+    expect(ids(marketingInsights(mkt({ campaignResults: [result(100, 49)] })))).toContain('campaign-delivery');
+    expect(ids(marketingInsights(mkt({ campaignResults: [result(100, 50)] })))).not.toContain('campaign-delivery');
+    expect(ids(marketingInsights(mkt({ campaignResults: [result(1000, 0, true)] })))).not.toContain('campaign-delivery');
   });
 });

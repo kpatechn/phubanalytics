@@ -50,7 +50,8 @@ npm run test:integration -w @phub/api
 - **Response:** `{ meta, data }`. `meta` carries the range, the previous period (for deltas), the property, `dataAsOf` and `lastRefreshAt`.
 - **Errors:** `application/problem+json`.
 - **Roles:** `analytics:exec` (Executive and Engagement), `analytics:marketing`, `analytics:it`; `analytics:admin` passes every check.
-- **Engagement:** DAU, trailing WAU (7 days) and MAU (30 days), DAU/MAU and WAU/MAU, new vs returning, weekly retention cohorts, feature reach and on-property active accounts. Active means at least one foreground event (see [db/README.md](db/README.md)).
+- **Engagement:** DAU, trailing WAU (7 days) and MAU (30 days), DAU/MAU and WAU/MAU, new vs returning, weekly retention cohorts, feature reach, on-property active accounts, tiers and platforms. Active means at least one foreground event (see [db/README.md](db/README.md)).
+- **Platform data** (from database `dextrans`): message delivery and failure reasons (Marketing, IT), campaign results (Marketing), app versions, session length and devices (IT), scheduled job health (IT), tier segmentation (Engagement). `meta.dextransAsOf` says when it was last refreshed.
 - **Caching:** 60 s in memory, plus `Cache-Control` and an `ETag`.
 
 Also: `GET /api/analytics/me`, `GET /api/analytics/properties`, `GET /healthz`, `GET /readyz` (503 when the rollups haven't refreshed for 30 minutes).

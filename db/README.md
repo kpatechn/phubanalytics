@@ -8,6 +8,9 @@ Raw app events land in `data."dexAnalytics"` (written by the ingest service). Ev
 |---|---|
 | `migrations/001_analytics_rollups.sql` | Replaces the first-generation `analytics` objects with the design below |
 | `migrations/002_engagement.sql` | Foreground flag on the event catalog and active-account columns on `guestDaily` (DAU/WAU/MAU) |
+| `migrations/003_dextrans.sql` | `postgres_fdw` link to database `dextrans` and rollups for sessions, devices, message delivery, campaigns, tiers and scheduled jobs |
+| `ops/dextrans_reader.sql`, `ops/link_dextrans.sql`, `../scripts/link-dextrans.sh` | Read-only `dextrans` role and the link's connection and login, per environment |
+| `tests/dextrans_checks.sql`, `../scripts/test-dextrans-local.sh` | Platform rollups vs direct counts; local end-to-end test of the link |
 | `seeds/001_event_catalog.sql` | Event display names, categories, feature map, dimension rules (all environments) |
 | `seeds/graton_dev_property.sql` | Graton dev property row. Inserting it queues its whole history |
 | `tests/rollup_checks.sql` | Golden values from the plan plus raw-vs-rollup invariants. Read-only |
@@ -51,16 +54,41 @@ An account is **active** on a day when `guestDaily."foregroundEventCount" > 0`: 
 
 Guests are identified by `"userId"` (the dex account). The plan's "13 accounts" counted `attributes.player_id`, which mixes card numbers and account IDs; by account it is 8.
 
+## Platform data from `dextrans`
+
+`dexl` and `dextrans` are separate databases. Migration 003 adds `postgres_fdw` foreign tables (schema `dextrans` in `dexl`) that declare only the columns analytics needs, read through the role `analytics_dextrans_reader`. That role has column-level SELECT on exactly those columns, nothing else: no names, contacts, card numbers, tokens, OTPs, IPs or locations.
+
+`analytics."refreshDextrans"()` (pg_cron, every 15 minutes) rebuilds the last 3 local days, the last 45 days of campaign sends, and the snapshot tables:
+
+| Table | Grain | From |
+|---|---|---|
+| `sessionDaily` | day, platform, app version, on/off property | `dexauth.userSessions`: sessions, length distribution |
+| `guestDeviceDaily` | day, account, device, platform, version, model | sessions + `deviceInfos`. **Contains account and device IDs** |
+| `eventVersionDaily` | day, platform, version | app events joined to their session: events and API errors per version |
+| `pushDeliveryDaily` | day, message type, status, reason | `dexcomm.apnLogs`; reasons normalized (tokens, IDs, card numbers removed) |
+| `campaign`, `campaignDaily` | campaign; sent day, campaign, channel | `phcamp.campaignMaster`, `campaignStats` (funnel by sent day) |
+| `accountTier` | account | `dexpatron.cards`: current tier. **Contains account IDs** |
+| `jobRunDaily`, `jobLatest` | day, job; job | `dexcron.jobStatus`: runs, failures, stuck runs, duration |
+
+Test campaigns and jobs are flagged by name (`analytics."looksLikeTest"`); `analytics."campaignFlag"` overrides a campaign's flag. A dextrans failure is logged in `refreshRun` (`kind = 'dextrans'`) and never blocks the event rollups. To rebuild all history: `CALL analytics."refreshDextrans"(400, 400)`.
+
+Set up or rotate the link (new random password; dextrans receives only its SCRAM verifier; nothing is printed):
+
+```bash
+scripts/link-dextrans.sh graton-dev
+```
+
 ## Deploy to an environment
 
-Deployed to Graton dev on 2026-10-22: migrations 001 and 002, all checks pass. Scheduled the same day with pg_cron:
+Deployed to Graton dev on 2026-10-22: migrations 001–003, the dextrans link, all checks pass. Scheduled the same day with pg_cron:
 - **Parameter group:** `playerhub-phub-graton-dev-uw2-pg-pg`, used only by this instance. `shared_preload_libraries = pg_stat_statements,pg_tle,pg_cron` and `cron.database_name = dexl`.
-- **Jobs:** `analytics-refresh` every 5 minutes, and `cron-history-purge` daily.
+- **Jobs:** `analytics-refresh` every 5 minutes, `analytics-dextrans-refresh` every 15 minutes, and `cron-history-purge` daily.
 - **Verified:** the first scheduled run (18:25 UTC) rebuilt 3 queued days.
 
 ```bash
 psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/migrations/001_analytics_rollups.sql
 psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/migrations/002_engagement.sql
+psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/migrations/003_dextrans.sql
 psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/seeds/001_event_catalog.sql
 psql "service=graton-dev dbname=dexl" -v ON_ERROR_STOP=1 -f db/seeds/graton_dev_property.sql
 psql "service=graton-dev dbname=dexl" -c 'CALL analytics."refreshRollups"()'

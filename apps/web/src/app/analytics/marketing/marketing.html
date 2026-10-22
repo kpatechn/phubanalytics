@@ -12,6 +12,7 @@
       <app-kpi-tile metric="pushOpened" [value]="fmt(d.funnel.pushOpened)" />
       <app-kpi-tile metric="pushReceived" [value]="fmt(d.funnel.pushReceived)" sub="floor: app open only" />
       <app-kpi-tile metric="permissionDenied" [value]="fmt(d.permissions.denied)" />
+      <app-kpi-tile metric="pushFailRate" [value]="sendFailRate().value" [sub]="sendFailRate().sub" />
     </section>
 
     <div class="grid-2">
@@ -83,6 +84,62 @@
         </div>
       </section>
     }
+    <section class="card" aria-labelledby="mk-results">
+      <div class="card-head">
+        <div>
+          <h2 id="mk-results">Campaign results</h2>
+          <div class="card-sub">Messages sent in the period, and how many were later delivered, opened, clicked and converted</div>
+        </div>
+        @if (testCampaigns() > 0) {
+          <button type="button" class="btn" [attr.aria-pressed]="showTestCampaigns()" (click)="showTestCampaigns.set(!showTestCampaigns())">
+            {{ showTestCampaigns() ? 'Hide' : 'Show' }} {{ testCampaigns() }} test campaign{{ testCampaigns() === 1 ? '' : 's' }}
+          </button>
+        }
+      </div>
+      @if (campaignRows().length === 0) {
+        <p class="note">No campaign messages sent in this period{{ testCampaigns() > 0 && !showTestCampaigns() ? ' (test campaigns hidden)' : '' }}.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th scope="col">Campaign</th><th scope="col">Channel</th>
+                <th scope="col" class="num">Sent</th><th scope="col" class="num">Delivered</th><th scope="col" class="num">Opened</th>
+                <th scope="col" class="num">Clicked</th><th scope="col" class="num">Converted</th><th scope="col" class="num">Unsubscribed</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (c of campaignRows(); track c.campaignId + c.channel) {
+                <tr>
+                  <td>{{ c.name }} @if (c.isTest) {<span class="tag">test</span>}</td>
+                  <td>{{ c.channel }}</td>
+                  <td class="num">{{ fmt(c.sent) }}</td>
+                  <td class="num">{{ fmt(c.delivered) }} <span class="note">{{ c.deliveredPct }}</span></td>
+                  <td class="num">{{ fmt(c.opened) }} <span class="note">{{ c.openedPct }}</span></td>
+                  <td class="num">{{ fmt(c.clicked) }}</td>
+                  <td class="num">{{ fmt(c.converted) }}</td>
+                  <td class="num">{{ fmt(c.unsubscribed) }}</td>
+                </tr>
+              }
+            </tbody>
+            <tfoot>
+              <tr>
+                <th scope="row" colspan="2">Total</th>
+                <td class="num">{{ fmt(campaignTotals().sent) }}</td>
+                <td class="num">{{ fmt(campaignTotals().delivered) }}</td>
+                <td class="num">{{ fmt(campaignTotals().opened) }}</td>
+                <td class="num">{{ fmt(campaignTotals().clicked) }}</td>
+                <td class="num">{{ fmt(campaignTotals().converted) }}</td>
+                <td class="num">{{ fmt(campaignTotals().unsubscribed) }}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <p class="note">Delivered and opened percentages are of messages sent. Campaigns whose name looks like a test are flagged automatically.</p>
+      }
+    </section>
+
+    <app-delivery-card [delivery]="d.delivery" />
   } @else {
     <app-skeleton />
   }

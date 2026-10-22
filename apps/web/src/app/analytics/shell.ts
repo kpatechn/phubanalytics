@@ -47,7 +47,11 @@ export class Shell {
     const meta = this.filters.lastMeta();
     const p = this.property();
     if (!meta || !p) return null;
-    return { dataAsOf: fmtTimestamp(meta.dataAsOf, p.timeZone), refreshed: fmtTimestamp(meta.lastRefreshAt, p.timeZone) };
+    return {
+      dataAsOf: fmtTimestamp(meta.dataAsOf, p.timeZone),
+      refreshed: fmtTimestamp(meta.lastRefreshAt, p.timeZone),
+      platform: meta.dextransAsOf ? fmtTimestamp(meta.dextransAsOf, p.timeZone) : null,
+    };
   });
 
   constructor() {

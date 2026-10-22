@@ -81,6 +81,36 @@
       </section>
     </div>
 
+    <div class="grid-2">
+      <section class="card" aria-labelledby="eng-tiers">
+        <div class="card-head"><div><h2 id="eng-tiers">Active accounts by tier</h2><div class="card-sub">Current loyalty tier, applied to the whole period</div></div></div>
+        <app-bar-list [items]="tierItems()" empty="No active accounts in this period." />
+      </section>
+
+      <section class="card" aria-labelledby="eng-platforms">
+        <div class="card-head"><div><h2 id="eng-platforms">Accounts by platform</h2><div class="card-sub">Accounts with a server session in the period; one account can use several</div></div></div>
+        <app-bar-list [items]="platformItems()" empty="No sessions in this period." />
+      </section>
+    </div>
+
+    @if (tierGrid().rows.length > 0) {
+      <section class="card" aria-labelledby="eng-tier-reach">
+        <div class="card-head"><div><h2 id="eng-tier-reach">Feature reach by tier</h2><div class="card-sub">Accounts that used each feature, and the share of that tier's active accounts</div></div></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr><th scope="col">Feature</th>@for (t of tierGrid().tiers; track t) {<th scope="col" class="num">{{ t }}</th>}</tr>
+            </thead>
+            <tbody>
+              @for (r of tierGrid().rows; track r.feature) {
+                <tr><th scope="row">{{ r.feature }}</th>@for (c of r.cells; track $index) {<td class="num">{{ c }}</td>}</tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+
     <section class="card definition" aria-labelledby="eng-def">
       <h2 id="eng-def">How activity is counted</h2>
       <p>

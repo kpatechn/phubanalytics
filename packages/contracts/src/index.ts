@@ -27,6 +27,8 @@ export interface Meta {
   dataAsOf: string | null;
   /** Last successful rollup refresh (ISO timestamp). */
   lastRefreshAt: string | null;
+  /** Last successful refresh of the platform (dextrans) rollups. */
+  dextransAsOf: string | null;
 }
 
 export interface Envelope<T> {
@@ -109,6 +111,8 @@ export interface MarketingData {
   geofenceExits: number;
   webContent: { page: string; opens: number; avgSeconds: number | null }[];
   contentViews: { kind: 'promotion' | 'event' | 'drawing'; label: string; views: number; avgSeconds: number | null }[];
+  delivery: Delivery;
+  campaignResults: CampaignResult[];
 }
 
 export interface ItData {
@@ -120,6 +124,109 @@ export interface ItData {
   biometrics: { passed: number; failed: number };
   logins: { started: number; succeeded: number; authMethods: { method: string; count: number }[] };
   pushReceived: number;
+  versions: VersionUsage[];
+  sessionLength: SessionLength[];
+  platforms: PlatformUsage[];
+  deviceModels: DeviceModel[];
+  delivery: Delivery;
+  jobs: JobHealth[];
+  jobDaily: { day: string; runs: number; failed: number; stuck: number }[];
+}
+
+
+// Platform data (database dextrans): sessions, devices, delivery, campaigns, tiers, jobs.
+
+export interface PlatformUsage {
+  platform: string;
+  sessions: number;
+  accounts: number;
+  devices: number;
+}
+
+export interface VersionUsage {
+  platform: string;
+  appVersion: string;
+  sessions: number;
+  accounts: number;
+  /** App events and API errors sent from sessions on this version. */
+  events: number;
+  errors: number;
+  /** Highest version seen for the platform in the period. */
+  isLatest: boolean;
+}
+
+export interface SessionLength {
+  platform: string;
+  /** Sessions with a recorded end (length known). */
+  ended: number;
+  sessions: number;
+  avgSeconds: number | null;
+  /** Bucket holding the median session. */
+  medianBucket: string | null;
+  buckets: { label: string; sessions: number }[];
+}
+
+export interface DeviceModel {
+  platform: string;
+  model: string;
+  devices: number;
+  accounts: number;
+}
+
+export interface DeliveryByType {
+  messageType: string;
+  sent: number;
+  delivered: number;
+  failed: number;
+  /** Pending and any other status. */
+  other: number;
+}
+
+export interface Delivery {
+  byType: DeliveryByType[];
+  /** Failure reasons with tokens, IDs and card numbers removed. */
+  reasons: { reason: string; count: number }[];
+  daily: { day: string; delivered: number; failed: number; other: number }[];
+}
+
+export interface CampaignResult {
+  campaignId: string;
+  name: string;
+  category: string;
+  status: string;
+  targetType: string;
+  isTest: boolean;
+  channel: string;
+  /** Messages sent in the period, and how many of those were later delivered, opened... */
+  sent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  converted: number;
+  unsubscribed: number;
+}
+
+export interface JobHealth {
+  jobName: string;
+  isTest: boolean;
+  runs: number;
+  completed: number;
+  failed: number;
+  /** Started over an hour ago and never finished. */
+  stuck: number;
+  running: number;
+  avgSeconds: number | null;
+  maxSeconds: number | null;
+  /** Latest run in the last 30 days, regardless of the period. */
+  lastStartAt: string | null;
+  lastStatus: string | null;
+}
+
+export interface TierUsage {
+  tier: string;
+  activeAccounts: number;
+  onsiteAccounts: number;
+  newAccounts: number;
 }
 
 /**
@@ -184,6 +291,12 @@ export interface EngagementData {
   backgroundEvents: string[];
   /** First day with any history: "new" means first seen since this day. */
   historyStart: string | null;
+  /** Active accounts by current loyalty tier ("(no card)" when none). */
+  tiers: TierUsage[];
+  /** Accounts that used each feature, by tier. */
+  featureTiers: { feature: string; tier: string; accounts: number }[];
+  /** Accounts, sessions and devices by platform (from server sessions). */
+  platforms: PlatformUsage[];
 }
 
 export type ExecutiveResponse = Envelope<ExecutiveData>;

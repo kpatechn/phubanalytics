@@ -12,6 +12,8 @@
       <app-kpi-tile metric="loginRate" [value]="k.login.value" [sub]="k.login.sub" />
       <app-kpi-tile metric="biometricRate" [value]="k.biometric.value" [sub]="k.biometric.sub" />
       <app-kpi-tile metric="pushReceived" [value]="k.push" sub="floor: app open only" />
+      <app-kpi-tile metric="pushFailRate" [value]="k.sendFail.value" [sub]="k.sendFail.sub" />
+      <app-kpi-tile metric="stuckJobs" [value]="k.stuck.value" [sub]="k.stuck.sub" />
     </section>
 
     <div class="grid-2">
@@ -83,6 +85,127 @@
         <app-bar-list [items]="authMethods()" empty="No logins in this period." />
       </section>
     </div>
+    <section class="card" aria-labelledby="it-versions">
+      <div class="card-head"><div><h2 id="it-versions">App versions</h2><div class="card-sub">Accounts, sessions and API errors by platform and version (from server sessions)</div></div></div>
+      @if (versionRows().length === 0) {
+        <p class="note">No sessions in this period.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr><th scope="col">Platform</th><th scope="col">Version</th><th scope="col" class="num">Accounts</th><th scope="col" class="num">Sessions</th><th scope="col" class="num">API errors</th><th scope="col" class="num">Errors per 100 sessions</th></tr>
+            </thead>
+            <tbody>
+              @for (v of versionRows(); track v.platform + v.appVersion) {
+                <tr>
+                  <td>{{ v.platformLabel }}</td>
+                  <td class="mono">{{ v.appVersion }} @if (v.isLatest) {<span class="tag good">latest</span>}</td>
+                  <td class="num">{{ fmt(v.accounts) }}</td>
+                  <td class="num">{{ fmt(v.sessions) }}</td>
+                  <td class="num">{{ fmt(v.errors) }}</td>
+                  <td class="num">{{ v.errorsPer100 }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="note">"unknown": events whose session isn't in the server session log.</p>
+      }
+    </section>
+
+    <div class="grid-2">
+      <section class="card" aria-labelledby="it-length">
+        <div class="card-head"><div><h2 id="it-length">Session length</h2><div class="card-sub">Sessions with a recorded end, by platform</div></div></div>
+        @if (lengthRows().length === 0) {
+          <p class="note">No sessions in this period.</p>
+        } @else {
+          <div class="table-wrap">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th scope="col">Platform</th><th scope="col" class="num">Ended</th><th scope="col">Median</th><th scope="col" class="num">Average</th>
+                  @for (label of lengthLabels(); track label) {<th scope="col" class="num">{{ label }}</th>}
+                </tr>
+              </thead>
+              <tbody>
+                @for (l of lengthRows(); track l.platform) {
+                  <tr>
+                    <td>{{ l.platformLabel }}</td>
+                    <td class="num">{{ fmt(l.ended) }} <span class="note">of {{ fmt(l.sessions) }}</span></td>
+                    <td>{{ l.medianBucket ?? '–' }}</td>
+                    <td class="num">{{ duration(l.avgSeconds) }}</td>
+                    @for (b of l.shares; track b.label) {<td class="num">{{ b.text }}</td>}
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+      </section>
+
+      <section class="card" aria-labelledby="it-devices">
+        <div class="card-head"><div><h2 id="it-devices">Devices</h2><div class="card-sub">Devices with a session in the period</div></div></div>
+        <app-bar-list [items]="platformItems()" empty="No sessions in this period." />
+        @if (modelItems().length > 0) {
+          <h3 class="sub-head">Top models</h3>
+          <app-bar-list [items]="modelItems()" />
+        }
+      </section>
+    </div>
+
+    <app-delivery-card [delivery]="d.delivery" [showDaily]="true" />
+
+    <section class="card" aria-labelledby="it-jobs">
+      <div class="card-head">
+        <div><h2 id="it-jobs">Scheduled jobs</h2><div class="card-sub">Runs that started in the period; last run is the latest in the past 30 days</div></div>
+        @if (testJobs() > 0) {
+          <button type="button" class="btn" [attr.aria-pressed]="showTestJobs()" (click)="showTestJobs.set(!showTestJobs())">
+            {{ showTestJobs() ? 'Hide' : 'Show' }} {{ testJobs() }} test job{{ testJobs() === 1 ? '' : 's' }}
+          </button>
+        }
+      </div>
+      @if (jobRows().length === 0) {
+        <p class="note">No job runs in this period.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th scope="col">Job</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Failed</th><th scope="col" class="num">Stuck</th>
+                <th scope="col" class="num">Failed %</th><th scope="col" class="num">Avg</th><th scope="col" class="num">Max</th><th scope="col">Last run</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (j of jobRows(); track j.jobName) {
+                <tr>
+                  <td class="mono">{{ j.jobName }} @if (j.isTest) {<span class="tag">test</span>}</td>
+                  <td class="num">{{ fmt(j.runs) }}</td>
+                  <td class="num">{{ fmt(j.failed) }}</td>
+                  <td class="num">
+                    @if (j.stuck > 0) {<span class="tag bad"><span aria-hidden="true">✕</span> {{ fmt(j.stuck) }}</span>} @else {0}
+                  </td>
+                  <td class="num">
+                    @if (j.failing) {<span class="tag warn"><span aria-hidden="true">!</span> {{ j.failRate }}</span>} @else { {{ j.failRate }} }
+                  </td>
+                  <td class="num">{{ duration(j.avgSeconds) }}</td>
+                  <td class="num">{{ duration(j.maxSeconds) }}</td>
+                  <td>
+                    {{ j.lastRun }}
+                    @if (j.lastStatus && j.lastStatus !== 'completed') {
+                      <span class="tag" [class.bad]="j.lastStatus === 'failed'">{{ j.lastStatus }}</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+
+    <app-chart-card heading="Job failures per day" sub="Failed and stuck runs" [columns]="jobDayColumns" [rows]="jobDayRows()">
+      <div class="chart" [appChart]="jobChart()" chartLabel="Stacked bar chart of failed and stuck scheduled job runs per day"></div>
+    </app-chart-card>
   } @else {
     <app-skeleton />
   }

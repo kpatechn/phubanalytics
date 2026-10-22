@@ -7,7 +7,7 @@ import { InsightList } from '../../shared/insight-list';
 import { KpiTile } from '../../shared/kpi-tile';
 import { ErrorPanel, Skeleton } from '../../shared/page-state';
 import { Filters } from '../filters';
-import { delta, deltaPoints, fmtDay, fmtInt, fmtPct } from '../format';
+import { delta, deltaPoints, fmtDay, fmtInt, fmtPct, fmtPlatform } from '../format';
 import { INSIGHT_CONFIG, engagementInsights } from '../insights';
 import { loadView } from '../load';
 
@@ -178,6 +178,42 @@ export class EngagementPage {
     if (!d) return [];
     return d.features.map((f) => ({ label: f.feature, value: f.accounts, note: `${fmtPct(f.accounts, d.summary.activeAccounts)} of active` }));
   });
+
+  protected readonly tierItems = computed<BarItem[]>(() =>
+    (this.data()?.tiers ?? []).map((t) => ({
+      label: t.tier,
+      value: t.activeAccounts,
+      note: `${fmtInt(t.onsiteAccounts)} on property · ${fmtInt(t.newAccounts)} new`,
+    })),
+  );
+
+  /** Feature reach by tier: share of each tier's active accounts that used the feature. */
+  protected readonly tierGrid = computed(() => {
+    const d = this.data();
+    if (!d) return { tiers: [] as string[], rows: [] as { feature: string; cells: string[] }[] };
+    const tiers = d.tiers.map((t) => t.tier);
+    const active = new Map(d.tiers.map((t) => [t.tier, t.activeAccounts]));
+    const used = new Map(d.featureTiers.map((f) => [`${f.feature}|${f.tier}`, f.accounts]));
+    const features = d.features.filter((f) => f.accounts > 0).map((f) => f.feature);
+    return {
+      tiers,
+      rows: features.map((feature) => ({
+        feature,
+        cells: tiers.map((tier) => {
+          const n = used.get(`${feature}|${tier}`) ?? 0;
+          return n === 0 ? '–' : `${fmtInt(n)} (${fmtPct(n, active.get(tier) ?? 0)})`;
+        }),
+      })),
+    };
+  });
+
+  protected readonly platformItems = computed<BarItem[]>(() =>
+    (this.data()?.platforms ?? []).map((p) => ({
+      label: fmtPlatform(p.platform),
+      value: p.accounts,
+      note: `${fmtInt(p.sessions)} sessions · ${fmtInt(p.devices)} devices`,
+    })),
+  );
 
   /** Retention grid: one row per weekly cohort, one column per week after it. */
   protected readonly cohortGrid = computed(() => {

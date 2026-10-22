@@ -1,13 +1,14 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import type { ItData } from '@phub/contracts';
 import { BarList, type BarItem } from '../../shared/bar-list';
 import { ChartCard, type TableColumn } from '../../shared/chart-card';
 import { ChartDirective, baseChart, type ChartBuilder } from '../../shared/chart.directive';
+import { DeliveryCard } from '../../shared/delivery-card';
 import { InsightList } from '../../shared/insight-list';
 import { KpiTile } from '../../shared/kpi-tile';
 import { ErrorPanel, Skeleton } from '../../shared/page-state';
 import { Filters } from '../filters';
-import { fmtDay, fmtInt, fmtPct, fmtRate } from '../format';
+import { fmtDay, fmtDuration, fmtInt, fmtPct, fmtPlatform, fmtRate, fmtTimestamp } from '../format';
 import { INSIGHT_CONFIG, itInsights } from '../insights';
 import { loadView } from '../load';
 
@@ -15,7 +16,7 @@ const isServerError = (status: string) => /^5\d\d$/.test(status);
 
 @Component({
   selector: 'app-it-ops-page',
-  imports: [KpiTile, ChartCard, ChartDirective, InsightList, ErrorPanel, Skeleton, BarList],
+  imports: [KpiTile, ChartCard, ChartDirective, InsightList, ErrorPanel, Skeleton, BarList, DeliveryCard],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './it-ops.html',
 })
@@ -62,8 +63,84 @@ export class ItOpsPage {
           : `${fmtInt(d.logins.succeeded)} of ${fmtInt(d.logins.started)} attempts`,
       },
       push: fmtInt(d.pushReceived),
+      sendFail: (() => {
+        const sent = d.delivery.byType.reduce((n, t) => n + t.sent, 0);
+        const failed = d.delivery.byType.reduce((n, t) => n + t.failed, 0);
+        return { value: fmtPct(failed, sent), sub: `${fmtInt(failed)} of ${fmtInt(sent)} sends` };
+      })(),
+      stuck: (() => {
+        const real = d.jobs.filter((j) => !j.isTest);
+        return { value: fmtInt(real.reduce((n, j) => n + j.stuck, 0)), sub: `of ${fmtInt(real.reduce((n, j) => n + j.runs, 0))} runs` };
+      })(),
     };
   });
+
+  protected readonly platformLabel = fmtPlatform;
+  protected readonly duration = fmtDuration;
+
+  protected readonly versionRows = computed(() =>
+    (this.data()?.versions ?? []).map((v) => ({
+      ...v,
+      platformLabel: fmtPlatform(v.platform),
+      errorsPer100: v.sessions > 0 ? ((v.errors / v.sessions) * 100).toFixed(1) : '–',
+    })),
+  );
+
+  protected readonly lengthRows = computed(() =>
+    (this.data()?.sessionLength ?? []).map((l) => ({
+      ...l,
+      platformLabel: fmtPlatform(l.platform),
+      shares: l.buckets.map((b) => ({ label: b.label, text: fmtPct(b.sessions, l.ended) })),
+    })),
+  );
+  protected readonly lengthLabels = computed(() => this.data()?.sessionLength[0]?.buckets.map((b) => b.label) ?? []);
+
+  protected readonly platformItems = computed<BarItem[]>(() =>
+    (this.data()?.platforms ?? []).map((p) => ({ label: fmtPlatform(p.platform), value: p.devices, note: `${fmtInt(p.accounts)} accounts · ${fmtInt(p.sessions)} sessions` })),
+  );
+  protected readonly modelItems = computed<BarItem[]>(() =>
+    (this.data()?.deviceModels ?? []).map((m) => ({ label: `${m.model} (${fmtPlatform(m.platform)})`, value: m.devices, note: `${fmtInt(m.accounts)} accounts` })),
+  );
+
+  protected readonly showTestJobs = signal(false);
+  protected readonly testJobs = computed(() => (this.data()?.jobs ?? []).filter((j) => j.isTest).length);
+  protected readonly jobRows = computed(() => {
+    const tz = this.filters.property()?.timeZone ?? 'UTC';
+    return (this.data()?.jobs ?? [])
+      .filter((j) => this.showTestJobs() || !j.isTest)
+      .map((j) => ({
+        ...j,
+        failRate: fmtPct(j.failed, j.runs),
+        failing: j.runs >= INSIGHT_CONFIG.jobs.minRuns && j.failed / j.runs >= INSIGHT_CONFIG.jobs.failShare,
+        lastRun: j.lastStartAt ? fmtTimestamp(j.lastStartAt, tz) : '–',
+      }));
+  });
+  protected readonly jobChart = computed<ChartBuilder>(() => {
+    const days = this.data()?.jobDaily ?? [];
+    return (t) => {
+      const b = baseChart(t);
+      return {
+        grid: b.grid,
+        tooltip: { ...b.tooltip, axisPointer: { type: 'shadow' } },
+        legend: b.legend,
+        xAxis: { type: 'category', data: days.map((d) => fmtDay(d.day)), ...b.categoryAxis },
+        yAxis: { type: 'value', minInterval: 1, ...b.valueAxis },
+        series: [
+          { name: 'Failed', type: 'bar', stack: 'bad', data: days.map((d) => d.failed), color: t.bad, barMaxWidth: 16 },
+          { name: 'Stuck', type: 'bar', stack: 'bad', data: days.map((d) => d.stuck), color: t.warn, barMaxWidth: 16 },
+        ],
+      };
+    };
+  });
+  protected readonly jobDayColumns: TableColumn[] = [
+    { key: 'day', label: 'Day' },
+    { key: 'runs', label: 'Runs', numeric: true },
+    { key: 'failed', label: 'Failed', numeric: true },
+    { key: 'stuck', label: 'Stuck', numeric: true },
+  ];
+  protected readonly jobDayRows = computed(() =>
+    (this.data()?.jobDaily ?? []).map((d) => ({ day: fmtDay(d.day), runs: fmtInt(d.runs), failed: fmtInt(d.failed), stuck: fmtInt(d.stuck) })),
+  );
 
   protected readonly errorChart = computed<ChartBuilder>(() => {
     const days = this.data()?.daily ?? [];

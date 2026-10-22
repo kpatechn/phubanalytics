@@ -179,6 +179,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
             source: 'rollup',
             dataAsOf: freshness.latestEventAt?.toISOString() ?? null,
             lastRefreshAt: freshness.lastSuccessAt?.toISOString() ?? null,
+            dextransAsOf: freshness.dextransRefreshedAt?.toISOString() ?? null,
           },
           data,
         } satisfies Envelope<unknown>;

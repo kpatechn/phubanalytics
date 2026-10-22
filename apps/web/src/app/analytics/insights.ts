@@ -1,5 +1,5 @@
-import type { EngagementData, ExecutiveData, ItData, MarketingData } from '@phub/contracts';
-import { fmtInt, fmtPct, fmtRate } from './format';
+import type { Delivery, EngagementData, ExecutiveData, ItData, MarketingData } from '@phub/contracts';
+import { fmtInt, fmtPct, fmtPlatform, fmtRate } from './format';
 
 // Insight rules: pure functions of one view's data. Thresholds and minimum
 // sample sizes live in INSIGHT_CONFIG so their owners can change them in one place.
@@ -25,9 +25,27 @@ export const INSIGHT_CONFIG = {
   denialsSkipped: { minDenials: 10, share: 0.5 },
   ctaGap: { minOpened: 20 },
   engagement: { minAccounts: 20, weekReturnTarget: 0.25, newShare: 0.5 },
+  delivery: { minSends: 100, failShare: 0.2 },
+  campaignDelivery: { minSent: 100, deliveredShare: 0.5 },
+  jobs: { minRuns: 20, failShare: 0.05 },
+  versionErrors: { minSessions: 20, multiple: 2 },
+  oldVersions: { minAccounts: 20, share: 0.3 },
 };
 
 export type InsightConfig = typeof INSIGHT_CONFIG;
+
+function deliveryInsight(d: Delivery, c: InsightConfig): Insight | null {
+  const sent = d.byType.reduce((n, t) => n + t.sent, 0);
+  const failed = d.byType.reduce((n, t) => n + t.failed, 0);
+  if (sent < c.delivery.minSends || failed / sent < c.delivery.failShare) return null;
+  const top = d.reasons[0];
+  return {
+    id: 'send-failures',
+    severity: 'bad',
+    title: `${fmtPct(failed, sent)} of message sends failed`,
+    detail: `${fmtInt(failed)} of ${fmtInt(sent)} sends failed.` + (top ? ` Top reason: "${top.reason}" (${fmtInt(top.count)}).` : ''),
+  };
+}
 
 export function executiveInsights(d: ExecutiveData, c: InsightConfig = INSIGHT_CONFIG): Insight[] {
   const out: Insight[] = [];
@@ -77,6 +95,39 @@ export function itInsights(d: ItData, c: InsightConfig = INSIGHT_CONFIG): Insigh
     out.push({ id: 'fix-first', severity: 'warn', title: `Fix first: ${worst[0]}`, detail: `${fmtInt(worst[1])} server errors (5xx), the most of any endpoint.` });
   }
 
+  const sendFailures = deliveryInsight(d.delivery, c);
+  if (sendFailures) out.push(sendFailures);
+
+  const realJobs = d.jobs.filter((j) => !j.isTest);
+  const stuck = realJobs.reduce((n, j) => n + j.stuck, 0);
+  if (stuck > 0) {
+    const worst = [...realJobs].sort((a, b) => b.stuck - a.stuck)[0]!;
+    out.push({ id: 'stuck-jobs', severity: 'bad', title: `${fmtInt(stuck)} scheduled job runs never finished`, detail: `Started over an hour ago with no end. Most: ${worst.jobName} (${fmtInt(worst.stuck)}).` });
+  }
+  const failing = realJobs.filter((j) => j.runs >= c.jobs.minRuns && j.failed / j.runs >= c.jobs.failShare);
+  if (failing.length > 0) {
+    const worst = [...failing].sort((a, b) => b.failed / b.runs - a.failed / a.runs)[0]!;
+    out.push({ id: 'job-failures', severity: 'warn', title: `${fmtInt(failing.length)} scheduled job${failing.length === 1 ? '' : 's'} failing ${fmtPct(c.jobs.failShare, 1)} or more of runs`, detail: `Worst: ${worst.jobName}, ${fmtInt(worst.failed)} of ${fmtInt(worst.runs)} runs failed.` });
+  }
+
+  const sessions = d.versions.reduce((n, v) => n + v.sessions, 0);
+  const errors = d.versions.reduce((n, v) => n + v.errors, 0);
+  if (sessions > 0) {
+    const overall = errors / sessions;
+    const bad = d.versions
+      .filter((v) => v.appVersion !== 'unknown' && v.sessions >= c.versionErrors.minSessions && overall > 0 && v.errors / v.sessions >= overall * c.versionErrors.multiple)
+      .sort((a, b) => b.errors / b.sessions - a.errors / a.sessions)[0];
+    if (bad) {
+      out.push({ id: 'version-errors', severity: 'warn', title: `${fmtPlatform(bad.platform)} ${bad.appVersion} has ${(bad.errors / bad.sessions / overall).toFixed(1)}× the average API error rate`, detail: `${fmtInt(bad.errors)} API errors in ${fmtInt(bad.sessions)} sessions, against ${(overall * 100).toFixed(1)} per 100 sessions overall.` });
+    }
+  }
+
+  const accounts = d.versions.reduce((n, v) => n + v.accounts, 0);
+  const behind = d.versions.filter((v) => !v.isLatest && v.appVersion !== 'unknown').reduce((n, v) => n + v.accounts, 0);
+  if (accounts >= c.oldVersions.minAccounts && behind / accounts >= c.oldVersions.share) {
+    out.push({ id: 'old-versions', severity: 'info', title: `${fmtPct(behind, accounts)} of accounts used an older app version`, detail: `Counted per account and version; an account that updated during the period appears on both.` });
+  }
+
   const checks = d.biometrics.passed + d.biometrics.failed;
   if (checks >= c.biometric.minChecks) {
     const rate = d.biometrics.passed / checks;
@@ -103,6 +154,16 @@ export function marketingInsights(d: MarketingData, c: InsightConfig = INSIGHT_C
   const skipped = d.permissions.denialTypes.find((x) => x.type === 'skipped')?.count ?? 0;
   if (denials >= c.denialsSkipped.minDenials && skipped / denials > c.denialsSkipped.share) {
     out.push({ id: 'denials-skipped', severity: 'info', title: `Most notification denials were skipped (${fmtPct(skipped, denials)})`, detail: `${fmtInt(skipped)} of ${fmtInt(denials)} denials were "skipped", not permanent: those guests can be asked again.` });
+  }
+
+  const sendFailures = deliveryInsight(d.delivery, c);
+  if (sendFailures) out.push(sendFailures);
+
+  const real = d.campaignResults.filter((r) => !r.isTest);
+  const sent = real.reduce((n, r) => n + r.sent, 0);
+  const delivered = real.reduce((n, r) => n + r.delivered, 0);
+  if (sent >= c.campaignDelivery.minSent && delivered / sent < c.campaignDelivery.deliveredShare) {
+    out.push({ id: 'campaign-delivery', severity: 'warn', title: `Only ${fmtPct(delivered, sent)} of campaign messages were confirmed delivered`, detail: `${fmtInt(delivered)} of ${fmtInt(sent)} messages from non-test campaigns. Delivery tracking may be incomplete as well as sends failing.` });
   }
 
   if (opened >= c.ctaGap.minOpened && ctaCompleted === 0) {

@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import type { MarketingData } from '@phub/contracts';
 import { BarList, type BarItem } from '../../shared/bar-list';
+import { DeliveryCard } from '../../shared/delivery-card';
 import { InsightList } from '../../shared/insight-list';
 import { KpiTile } from '../../shared/kpi-tile';
 import { ErrorPanel, Skeleton } from '../../shared/page-state';
@@ -15,7 +16,7 @@ const titled = (label: string) => (label === '(none)' ? '(no title)' : label);
 
 @Component({
   selector: 'app-marketing-page',
-  imports: [KpiTile, InsightList, ErrorPanel, Skeleton, BarList],
+  imports: [KpiTile, InsightList, ErrorPanel, Skeleton, BarList, DeliveryCard],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './marketing.html',
 })
@@ -82,6 +83,31 @@ export class MarketingPage {
   protected readonly shortVisits = computed(() =>
     (this.data()?.webContent ?? []).filter((w) => w.opens >= 10 && w.avgSeconds !== null && w.avgSeconds < 1).map((w) => w.page),
   );
+
+  protected readonly sendFailRate = computed(() => {
+    const d = this.data()?.delivery;
+    if (!d) return { value: '–', sub: '' };
+    const sent = d.byType.reduce((n, t) => n + t.sent, 0);
+    const failed = d.byType.reduce((n, t) => n + t.failed, 0);
+    return { value: fmtPct(failed, sent), sub: `${fmtInt(failed)} of ${fmtInt(sent)} sends` };
+  });
+
+  protected readonly showTestCampaigns = signal(false);
+  protected readonly testCampaigns = computed(() => (this.data()?.campaignResults ?? []).filter((c) => c.isTest).length);
+  protected readonly campaignRows = computed(() =>
+    (this.data()?.campaignResults ?? [])
+      .filter((c) => this.showTestCampaigns() || !c.isTest)
+      .map((c) => ({
+        ...c,
+        deliveredPct: fmtPct(c.delivered, c.sent),
+        openedPct: fmtPct(c.opened, c.sent),
+      })),
+  );
+  protected readonly campaignTotals = computed(() => {
+    const rows = this.campaignRows();
+    const sum = (k: 'sent' | 'delivered' | 'opened' | 'clicked' | 'converted' | 'unsubscribed') => rows.reduce((n, r) => n + r[k], 0);
+    return { sent: sum('sent'), delivered: sum('delivered'), opened: sum('opened'), clicked: sum('clicked'), converted: sum('converted'), unsubscribed: sum('unsubscribed') };
+  });
 
   protected readonly content = computed(() => {
     const views = this.data()?.contentViews ?? [];

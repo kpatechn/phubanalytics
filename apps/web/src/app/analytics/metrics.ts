@@ -160,6 +160,17 @@ export const METRICS = {
     source: 'First active day + 1 to + 30',
     caveat: 'Only accounts whose 30 days have fully passed count. Hidden below 20 accounts.',
   },
+  pushFailRate: {
+    label: 'Send failure rate',
+    definition: 'Share of messages the platform tried to send (push, email, SMS, real-time) that failed.',
+    source: 'Platform send log (dextrans dexcomm.apnLogs)',
+    caveat: 'Counts send attempts, not guests. Failure reasons have tokens and card numbers removed.',
+  },
+  stuckJobs: {
+    label: 'Stuck job runs',
+    definition: 'Scheduled job runs that started over an hour ago and never finished.',
+    source: 'Scheduled job log (dextrans dexcron.jobStatus)',
+  },
 } satisfies Record<string, MetricDefinition>;
 
 export type MetricKey = keyof typeof METRICS;

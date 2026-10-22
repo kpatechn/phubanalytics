@@ -64,3 +64,14 @@ export function deltaPoints(current: number | null, previous: number | null): De
     good: points > 0,
   };
 }
+
+const PLATFORM_LABEL: Record<string, string> = { ios: 'iOS', android: 'Android', mac: 'Mac', web: 'Web', unknown: 'Unknown' };
+export const fmtPlatform = (p: string): string => PLATFORM_LABEL[p] ?? p;
+
+/** 0.5 s, 12 s, 3.2 min, 1.4 h. */
+export function fmtDuration(seconds: number | null): string {
+  if (seconds === null) return '–';
+  if (seconds < 60) return `${oneDecimal.format(seconds)} s`;
+  if (seconds < 3600) return `${oneDecimal.format(seconds / 60)} min`;
+  return `${oneDecimal.format(seconds / 3600)} h`;
+}
