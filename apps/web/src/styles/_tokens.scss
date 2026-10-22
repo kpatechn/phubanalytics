@@ -1,0 +1,61 @@
+// Design tokens. Teal = magnitude, grey = context, status colors only for status
+// (always with an icon and text). Text colors meet 4.5:1 on --bg and --surface.
+
+:root {
+  color-scheme: light;
+  --bg: #f5f7f9;
+  --surface: #ffffff;
+  --ink: #14181f;
+  --ink2: #384250;
+  --mute: #5b6676;
+  --line: #dde2e8;
+  --grid: #edf0f3;
+  --accent: #0f766e;
+  --accent-soft: #e3f3f1;
+  --ctx: #8e9aab;
+  --ctx-soft: #eef1f5;
+  --good: #15803d;
+  --good-soft: #e7f5ec;
+  --warn: #a35207;
+  --warn-soft: #fdf2e3;
+  --bad: #b42318;
+  --bad-soft: #fdecea;
+  --focus: #1d4ed8;
+  --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 8%);
+  --radius: 10px;
+  --font: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+@mixin dark {
+  color-scheme: dark;
+  --bg: #0e1116;
+  --surface: #161b22;
+  --ink: #e9edf2;
+  --ink2: #c4cbd4;
+  --mute: #9aa4b2;
+  --line: #2a313b;
+  --grid: #20262e;
+  --accent: #2dd4bf;
+  --accent-soft: #10302d;
+  --ctx: #6b778a;
+  --ctx-soft: #1d232b;
+  --good: #4ade80;
+  --good-soft: #10291a;
+  --warn: #fbbf24;
+  --warn-soft: #2e2410;
+  --bad: #f87171;
+  --bad-soft: #341616;
+  --focus: #93c5fd;
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    @include dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  @include dark;
+}

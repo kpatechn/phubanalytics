@@ -1,0 +1,89 @@
+<div class="page">
+  @if (problem(); as p) {
+    <app-error-panel [problem]="p" (retry)="filters.reload()" />
+  } @else if (data(); as d) {
+    <app-insight-list [insights]="insights()" />
+
+    <section class="kpi-grid" aria-label="Headline numbers">
+      <app-kpi-tile metric="inboxViewed" [value]="fmt(d.funnel.inboxViewed)" />
+      <app-kpi-tile metric="opened" [value]="fmt(d.funnel.opened)" />
+      <app-kpi-tile metric="ctaCompleted" [value]="fmt(d.funnel.ctaCompleted)" />
+      <app-kpi-tile metric="deleted" [value]="fmt(d.funnel.deleted)" />
+      <app-kpi-tile metric="pushOpened" [value]="fmt(d.funnel.pushOpened)" />
+      <app-kpi-tile metric="pushReceived" [value]="fmt(d.funnel.pushReceived)" sub="floor: app open only" />
+      <app-kpi-tile metric="permissionDenied" [value]="fmt(d.permissions.denied)" />
+    </section>
+
+    <div class="grid-2">
+      <section class="card" aria-labelledby="mk-funnel">
+        <div class="card-head"><div><h2 id="mk-funnel">Message funnel</h2><div class="card-sub">Inbox messages, each step vs the one before</div></div></div>
+        <app-bar-list [items]="funnel()" />
+      </section>
+
+      <section class="card" aria-labelledby="mk-campaigns">
+        <div class="card-head"><div><h2 id="mk-campaigns">Push opens by campaign</h2><div class="card-sub">{{ fmt(d.funnel.pushOpened) }} opens · {{ fmt(d.funnel.pushReceived) }} received in foreground</div></div></div>
+        <app-bar-list [items]="campaigns()" empty="No push opens in this period." />
+      </section>
+
+      <section class="card" aria-labelledby="mk-messages">
+        <div class="card-head"><div><h2 id="mk-messages">Most opened messages</h2><div class="card-sub">Top 10 by opens from the inbox</div></div></div>
+        <app-bar-list [items]="messages()" empty="No messages opened in this period." />
+      </section>
+
+      <section class="card" aria-labelledby="mk-perm">
+        <div class="card-head"><div><h2 id="mk-perm">Notification permission denials</h2><div class="card-sub">{{ fmt(d.permissions.denied) }} denials</div></div></div>
+        <app-bar-list [items]="denials()" empty="No denials in this period." />
+        <p class="note">Opt-in rate isn't shown: the "granted" event ({{ fmt(d.permissions.granted) }}) fires on every app launch, so it isn't an opt-in count.</p>
+      </section>
+
+      <section class="card" aria-labelledby="mk-geo">
+        <div class="card-head">
+          <div><h2 id="mk-geo">Geofence entries</h2><div class="card-sub">{{ fmt(geofenceEntries()) }} entries · {{ fmt(geofenceExits()) }} exits</div></div>
+          @if (testZoneCount() > 0) {
+            <button type="button" class="btn" [attr.aria-pressed]="includeTestZones()" (click)="includeTestZones.set(!includeTestZones())">
+              {{ includeTestZones() ? 'Hide' : 'Show' }} {{ testZoneCount() }} test zones
+            </button>
+          }
+        </div>
+        <app-bar-list [items]="geofences()" empty="No geofence entries in this period." />
+      </section>
+
+      <section class="card" aria-labelledby="mk-web">
+        <div class="card-head"><div><h2 id="mk-web">Web content</h2><div class="card-sub">In-app web pages: opens and average time on page</div></div></div>
+        @if (webRows().length === 0) {
+          <p class="note">No web content viewed in this period.</p>
+        } @else {
+          <div class="table-wrap">
+            <table class="data">
+              <thead><tr><th scope="col">Page</th><th scope="col" class="num">Opens</th><th scope="col" class="num">Avg time</th></tr></thead>
+              <tbody>
+                @for (r of webRows(); track r.page) {
+                  <tr><td>{{ r.page }}</td><td class="num">{{ r.opens }}</td><td class="num">{{ r.avg }}</td></tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+        @if (shortVisits().length > 0) {
+          <p class="note"><span aria-hidden="true">⚠</span> Under 1 second on average: {{ shortVisits().join(', ') }}. Likely a load failure or bounce.</p>
+        }
+      </section>
+    </div>
+
+    @if (content().length > 0) {
+      <section class="card" aria-labelledby="mk-content">
+        <div class="card-head"><div><h2 id="mk-content">Content views</h2><div class="card-sub">Top promotions, events and live drawings opened</div></div></div>
+        <div class="grid-2">
+          @for (g of content(); track g.kind) {
+            <div>
+              <h3>{{ g.label }}</h3>
+              <app-bar-list [items]="g.items" />
+            </div>
+          }
+        </div>
+      </section>
+    }
+  } @else {
+    <app-skeleton />
+  }
+</div>

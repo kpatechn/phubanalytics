@@ -1,0 +1,16 @@
+{
+  "name": "@phub/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Types shared by the analytics API and web app. Types only: no runtime code.",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out-tsc/
+.angular/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# Raw exports contain live session IDs (plan section 0)
+*.xlsx

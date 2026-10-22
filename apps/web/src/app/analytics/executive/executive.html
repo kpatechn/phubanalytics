@@ -1,0 +1,33 @@
+<div class="page">
+  @if (problem(); as p) {
+    <app-error-panel [problem]="p" (retry)="filters.reload()" />
+  } @else if (tiles(); as k) {
+    <app-insight-list [insights]="insights()" />
+
+    <section class="kpi-grid" aria-label="Headline numbers">
+      <app-kpi-tile metric="sessions" [value]="k.sessions.value" [delta]="k.sessions.delta" />
+      <app-kpi-tile metric="appOpens" [value]="k.appOpens.value" [delta]="k.appOpens.delta" />
+      <app-kpi-tile metric="loginRate" [value]="k.loginRate.value" [sub]="k.loginRate.sub" />
+      <app-kpi-tile metric="playersLoggedIn" [value]="k.playersLoggedIn.value" [delta]="k.playersLoggedIn.delta" />
+      <app-kpi-tile metric="activeGuests" [value]="k.activeGuests.value" [delta]="k.activeGuests.delta" />
+      <app-kpi-tile metric="onsiteShare" [value]="k.onsiteShare.value" [sub]="k.onsiteShare.sub" />
+      <app-kpi-tile metric="apiErrors" [value]="k.apiErrors.value" [sub]="k.apiErrors.sub" [delta]="k.apiErrors.delta" />
+      <app-kpi-tile metric="totalEvents" [value]="k.totalEvents.value" [delta]="k.totalEvents.delta" />
+    </section>
+
+    <div class="grid-2">
+      <app-chart-card heading="Daily activity" sub="Sessions, logins and API errors per day" [columns]="dailyColumns" [rows]="dailyRows()">
+        <div class="chart" [appChart]="dailyChart()" chartLabel="Line chart of sessions, logins and API errors per day"></div>
+      </app-chart-card>
+
+      <app-chart-card heading="Feature usage" sub="Events per feature, on vs off property" [columns]="featureColumns" [rows]="featureRows()">
+        <div class="chart" [appChart]="featureChart()" chartLabel="Stacked bar chart of feature events on and off property"></div>
+        @if (unusedFeatures().length > 0) {
+          <p class="note" card-foot>No use this period: {{ unusedFeatures().join(', ') }}</p>
+        }
+      </app-chart-card>
+    </div>
+  } @else {
+    <app-skeleton />
+  }
+</div>

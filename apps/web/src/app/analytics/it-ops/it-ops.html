@@ -1,0 +1,89 @@
+<div class="page">
+  @if (problem(); as p) {
+    <app-error-panel [problem]="p" (retry)="filters.reload()" />
+  } @else if (tiles(); as k) {
+    @let d = data()!;
+    <app-insight-list [insights]="insights()" />
+
+    <section class="kpi-grid" aria-label="Headline numbers">
+      <app-kpi-tile metric="apiErrors" [value]="k.apiErrors" />
+      <app-kpi-tile metric="serverErrors" [value]="k.server.value" [sub]="k.server.sub" />
+      <app-kpi-tile metric="uploadFailures" [value]="k.uploads.value" [sub]="k.uploads.sub" />
+      <app-kpi-tile metric="loginRate" [value]="k.login.value" [sub]="k.login.sub" />
+      <app-kpi-tile metric="biometricRate" [value]="k.biometric.value" [sub]="k.biometric.sub" />
+      <app-kpi-tile metric="pushReceived" [value]="k.push" sub="floor: app open only" />
+    </section>
+
+    <div class="grid-2">
+      <app-chart-card heading="API errors per day" [columns]="errorDayColumns" [rows]="errorDayRows()">
+        <div class="chart" [appChart]="errorChart()" chartLabel="Bar chart of API errors per day"></div>
+      </app-chart-card>
+      <app-chart-card heading="Activity by hour" sub="Property local time, all days in the period" [columns]="hourlyColumns" [rows]="hourlyRows()">
+        <div class="chart" [appChart]="hourlyChart()" chartLabel="Bar chart of events and API errors by hour of day"></div>
+      </app-chart-card>
+    </div>
+
+    <section class="card" aria-labelledby="it-errors">
+      <div class="card-head"><div><h2 id="it-errors">Errors by endpoint</h2><div class="card-sub">Counts are calls, not guests</div></div></div>
+      @if (d.errors.length === 0) {
+        <p class="note">No API errors in this period.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr><th scope="col">Endpoint</th><th scope="col">Method</th><th scope="col">Status</th><th scope="col">Type</th><th scope="col" class="num">Errors</th></tr>
+            </thead>
+            <tbody>
+              @for (e of d.errors; track $index) {
+                <tr>
+                  <td class="mono">{{ e.endpoint }}</td>
+                  <td>{{ e.method }}</td>
+                  <td>
+                    @if (isServerError(e.statusCode)) {
+                      <span class="tag bad"><span aria-hidden="true">✕</span> {{ e.statusCode }}</span>
+                    } @else {
+                      <span class="tag">{{ e.statusCode === '0' ? 'no response' : e.statusCode }}</span>
+                    }
+                  </td>
+                  <td>{{ e.errorType }}</td>
+                  <td class="num">{{ fmt(e.count) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+
+    <section class="card" aria-labelledby="it-messages">
+      <div class="card-head"><div><h2 id="it-messages">Top error messages</h2><div class="card-sub">First line, IDs and credentials removed</div></div></div>
+      @if (d.topMessages.length === 0) {
+        <p class="note">No error messages in this period.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th scope="col">Message</th><th scope="col">Endpoint</th><th scope="col">Status</th><th scope="col" class="num">Count</th></tr></thead>
+            <tbody>
+              @for (m of d.topMessages; track $index) {
+                <tr><td>{{ m.message }}</td><td class="mono">{{ m.endpoint }}</td><td>{{ m.statusCode }}</td><td class="num">{{ fmt(m.count) }}</td></tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+
+    <div class="grid-2">
+      <section class="card" aria-labelledby="it-screens">
+        <div class="card-head"><div><h2 id="it-screens">Most opened screens</h2><div class="card-sub">Top 15 page_open events</div></div></div>
+        <app-bar-list [items]="screens()" />
+      </section>
+      <section class="card" aria-labelledby="it-auth">
+        <div class="card-head"><div><h2 id="it-auth">Successful logins by method</h2></div></div>
+        <app-bar-list [items]="authMethods()" empty="No logins in this period." />
+      </section>
+    </div>
+  } @else {
+    <app-skeleton />
+  }
+</div>
