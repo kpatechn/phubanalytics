@@ -1,6 +1,6 @@
 # PlayerHub App Analytics
 
-Executive, Engagement, Marketing and IT & Operations dashboards for the PlayerHub mobile app, built on the `dexl.analytics` rollups.
+Executive, Engagement, Marketing and IT & Operations dashboards for the PlayerHub mobile app, built on the `dexl.analytics` rollups, plus a Chickasaw CDP section (segments, sites, Player 360) on the GEM database.
 
 New here? Start with the [documentation index](docs/README.md).
 
@@ -9,13 +9,13 @@ New here? Start with the [documentation index](docs/README.md).
 | `apps/api` | Fastify 5 + postgres.js summary API (Node 24, TypeScript, zod) |
 | `apps/web` | Angular 21 dashboard (standalone, signals, zoneless, ECharts) |
 | `packages/contracts` | Response types shared by both |
-| `db/` | Rollup migration, seeds, checks and pg_cron schedule ([db/README.md](db/README.md)) |
+| `db/` | Rollup migration, seeds, checks and pg_cron schedule ([db/README.md](db/README.md)); Chickasaw mock data and CDP layer ([db/cdp/README.md](db/cdp/README.md)) |
 | `docs/schema-validation.md` | How the plan was checked against the Graton dev database |
 | `docs/production-rollout.md` | Step-by-step production rollout, rollback and runbook |
 
 ## Run locally
 
-Needs Node 24+ and a `graton-dev` entry in `~/.pg_service.conf` with its password in `~/.pgpass`.
+Needs Node 24+ and a `graton-dev` entry in `~/.pg_service.conf` with its password in `~/.pgpass`. For the Chickasaw CDP section, also a `gem-dev` entry (GEM dev, VPN only) and the `cdp` schema built there (`scripts/build-cdp.sh`).
 
 ```bash
 npm install
@@ -32,7 +32,7 @@ npm run dev:web
 
 Open http://localhost:4200. The web dev server proxies `/api` to the API on port 3000.
 
-`write-dev-env.sh` writes `apps/api/.env` (mode 600, git-ignored) from your existing login. The API opens every database session read-only with a 10 s statement timeout, whatever role the URL uses. With `AUTH_MODE=dev` (allowed only when `APP_ENVIRONMENT=dev`) every request is treated as `analytics:admin`.
+`write-dev-env.sh` writes `apps/api/.env` (mode 600, git-ignored) from your existing logins; it adds `GEM_DATABASE_URL` when a `gem-dev` entry exists, and without it the CDP section stays hidden. The API opens every database session read-only with a 10 s statement timeout, whatever role the URL uses. With `AUTH_MODE=dev` (allowed only when `APP_ENVIRONMENT=dev`) every request is treated as `analytics:admin`.
 
 ## Test
 
@@ -43,7 +43,7 @@ npm test
 npm run test:integration -w @phub/api
 ```
 
-`npm test` runs the API tests (auth 401/403/200, validation, caching, date ranges) and the insight-rule tests (below minimum sample, at threshold, above). The integration test reads the plan's golden values for 2026-09-03 to 2026-10-02 from Graton dev through the API's own queries, and recounts DAU, WAU, MAU and new accounts for every day straight from raw events.
+`npm test` runs the API tests (auth 401/403/200, validation, caching, date ranges, the CDP endpoints) and the insight-rule tests (below minimum sample, at threshold, above). The integration test reads the plan's golden values for 2026-09-03 to 2026-10-02 from Graton dev through the API's own queries, and recounts DAU, WAU, MAU and new accounts for every day straight from raw events. With `GEM_DATABASE_URL` set, it also checks the CDP queries against direct counts in GEM dev.
 
 ## API
 
@@ -58,6 +58,15 @@ npm run test:integration -w @phub/api
 - **Caching:** 60 s in memory, plus `Cache-Control` and an `ETag`.
 
 Also: `GET /api/analytics/me`, `GET /api/analytics/properties`, `GET /healthz`, `GET /readyz` (503 when the rollups haven't refreshed for 30 minutes).
+
+### Chickasaw CDP
+
+`GET /api/cdp/{meta|segments|sites}`, `GET /api/cdp/players/examples?segment=champions`, `POST /api/cdp/players/lookup` with `{ "accountNumber": "…" }`.
+
+- **Source:** schema `cdp` in the GEM database (`GEM_DATABASE_URL`), through its own read-only pool. Without that setting the `cdp` view is hidden and these endpoints answer 404; before the first `cdp.refresh()` they answer 503.
+- **Role:** `analytics:cdp` (or `analytics:admin`).
+- **Response:** `{ meta, data }`. `meta` carries the 12-month window, when the CDP was last refreshed, every feed with its real/mock flag, and the site list. The dashboard shows a mock-data banner from it.
+- **Account numbers** travel only in the lookup's request body and in response bodies, never in URLs or logs. Responses that carry them are `no-store`; segment and site aggregates are cached for 5 minutes.
 
 ## Where this differs from the plan
 

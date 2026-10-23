@@ -1,0 +1,117 @@
+<div class="page">
+  @if (problem(); as p) {
+    <app-error-panel [problem]="p" (retry)="reload()" />
+  } @else if (data(); as d) {
+    <p class="note">
+      <span class="tag warn">Caution</span>
+      WinStar's real data is a sample with one trip per player, while the other sites have a full mocked year. Compare sites by
+      shape, not size, until a full WinStar load arrives.
+    </p>
+
+    <section class="card" aria-labelledby="cdp-sites">
+      <div class="card-head">
+        <div>
+          <h2 id="cdp-sites">Sites, last 12 months</h2>
+          <div class="card-sub">Gaming from rated play; non-gaming paid by every guest, carded or not, before tax and tips.</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr>
+              <th scope="col">Site</th>
+              <th scope="col">Gaming data</th>
+              <th scope="col" class="num">Home players</th>
+              <th scope="col" class="num">Active players</th>
+              <th scope="col" class="num">Also elsewhere</th>
+              <th scope="col" class="num">Trips</th>
+              <th scope="col" class="num">Theo</th>
+              <th scope="col" class="num">Comps</th>
+              <th scope="col" class="num">Hotel</th>
+              <th scope="col" class="num">Dining</th>
+              <th scope="col" class="num">Retail</th>
+              <th scope="col" class="num">Spa</th>
+              <th scope="col" class="num">Golf</th>
+              <th scope="col" class="num">Known guests</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (s of d.sites; track s.siteCode) {
+              <tr>
+                <th scope="row">{{ s.name }}<div class="city">{{ s.city }} · property {{ s.propertyId }}</div></th>
+                <td><span class="tag" [class.warn]="s.gamingIsMock" [class.good]="!s.gamingIsMock">{{ s.gamingIsMock ? 'mock' : 'real' }}</span></td>
+                <td class="num">{{ fmt(s.homePlayers) }}</td>
+                <td class="num">{{ fmt(s.activePlayers) }}</td>
+                <td class="num">{{ fmt(s.alsoOtherSites) }} <span class="extra">{{ pct(s.alsoOtherSites, s.activePlayers) }}</span></td>
+                <td class="num">{{ fmt(s.trips) }}</td>
+                <td class="num">{{ money(s.theo) }}</td>
+                <td class="num">{{ money(s.compsIssued) }}</td>
+                <td class="num">{{ s.nonGaming.hotel ? money(s.nonGaming.hotel) : '–' }}</td>
+                <td class="num">{{ money(s.nonGaming.dining) }}</td>
+                <td class="num">{{ s.nonGaming.retail ? money(s.nonGaming.retail) : '–' }}</td>
+                <td class="num">{{ s.nonGaming.spa ? money(s.nonGaming.spa) : '–' }}</td>
+                <td class="num">{{ s.nonGaming.golf ? money(s.nonGaming.golf) : '–' }}</td>
+                <td class="num">{{ share(s.knownGuestShare) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Home site: where the player has the most visit days. "Also elsewhere": active players here who were active at another site too. "Known guests": share of non-gaming paid that is linked to a Club Passport number, by card or by a unique email.</p>
+    </section>
+
+    <div class="grid-2">
+      <section class="card" aria-labelledby="cdp-theo">
+        <div class="card-head"><div><h2 id="cdp-theo">Theo by site</h2><div class="card-sub">Rated play, dollars</div></div></div>
+        <app-bar-list [items]="theoBars()" empty="No rated play in the window." />
+      </section>
+      <section class="card" aria-labelledby="cdp-ng">
+        <div class="card-head"><div><h2 id="cdp-ng">Non-gaming paid by site</h2><div class="card-sub">Hotel, dining, retail, spa and golf, dollars</div></div></div>
+        <app-bar-list [items]="nonGamingBars()" empty="No non-gaming in the window." />
+      </section>
+    </div>
+
+    @if (matrix(); as m) {
+      <section class="card" aria-labelledby="cdp-cross">
+        <div class="card-head">
+          <div>
+            <h2 id="cdp-cross">Where players also go</h2>
+            <div class="card-sub">Players by home site (rows) who were also active at another site (columns) in the 12 months</div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data matrix">
+            <thead>
+              <tr>
+                <th scope="col">Home site</th>
+                <th scope="col" class="num">Home players</th>
+                @for (c of m.columns; track c.code) {
+                  <th scope="col" class="num">{{ c.name }}</th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of m.rows; track r.name) {
+                <tr>
+                  <th scope="row">{{ r.name }}</th>
+                  <td class="num">{{ fmt(r.homePlayers) }}</td>
+                  @for (c of r.cells; track c.code) {
+                    @if (c.players === null) {
+                      <td class="num self">–</td>
+                    } @else {
+                      <td class="num">
+                        <span class="cell" [style.background]="c.alpha ? 'color-mix(in srgb, var(--accent) ' + c.alpha + '%, transparent)' : null">{{ fmt(c.players) }}</span>
+                      </td>
+                    }
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+  } @else {
+    <app-skeleton />
+  }
+</div>

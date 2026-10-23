@@ -2,9 +2,10 @@ import cors from '@fastify/cors';
 import etag from '@fastify/etag';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import { z } from 'zod';
-import type { Envelope, Me, Problem, Property, View } from '@phub/contracts';
+import type { CdpEnvelope, CdpMeta, Envelope, Me, Problem, Property, View } from '@phub/contracts';
 import { canView, viewsFor, type Authenticator, type Principal } from './auth.js';
 import { TtlCache } from './cache.js';
+import type { CdpRepo } from './cdp.js';
 import type { Config } from './config.js';
 import { DateRangeError, isIsoDate, resolveRange, todayIn } from './dates.js';
 import type { AnalyticsRepo, Scope } from './repo.js';
@@ -12,6 +13,8 @@ import type { AnalyticsRepo, Scope } from './repo.js';
 export interface AppDeps {
   config: Pick<Config, 'AUTH_MODE' | 'ALLOWED_ORIGIN'>;
   repo: AnalyticsRepo;
+  /** Chickasaw CDP (GEM database). Absent: the cdp view is hidden and its endpoints answer 404. */
+  cdp?: CdpRepo | undefined;
   authenticate: Authenticator;
   now?: () => Date;
   logger?: FastifyServerOptions['logger'];
@@ -23,6 +26,14 @@ const SummaryQuery = z.object({
   from: z.string().refine(isIsoDate, 'must be a date as YYYY-MM-DD').optional(),
   to: z.string().refine(isIsoDate, 'must be a date as YYYY-MM-DD').optional(),
   property: z.coerce.number().int().positive().optional(),
+});
+
+const SegmentQuery = z.object({
+  segment: z.string().regex(/^[a-z0-9_]{1,40}$/, 'must be a segment code'),
+});
+
+const LookupBody = z.object({
+  accountNumber: z.string().trim().regex(/^\d{1,12}$/, 'must be a Club Passport number (digits only)'),
 });
 
 /** Readiness fails when the rollups have not refreshed for this long. */
@@ -60,11 +71,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   await app.register(etag);
   if (deps.config.ALLOWED_ORIGIN) {
-    await app.register(cors, { origin: deps.config.ALLOWED_ORIGIN, credentials: true, methods: ['GET'] });
+    await app.register(cors, { origin: deps.config.ALLOWED_ORIGIN, credentials: true, methods: ['GET', 'POST'] });
   }
 
   const responses = new TtlCache<Envelope<unknown>>(60_000);
   const propertyList = new TtlCache<Property[]>(60_000, 1);
+  // CDP tables change only when cdp.refresh() runs, so aggregates keep for 5 minutes.
+  // Player lookups are never cached.
+  const cdpResponses = new TtlCache<unknown>(5 * 60_000, 50);
+  const visibleViews = (principal: Principal): View[] => viewsFor(principal).filter((v) => v !== 'cdp' || deps.cdp !== undefined);
 
   app.decorateRequest('principal', null);
 
@@ -83,8 +98,29 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   async function requireAnyView(request: FastifyRequest): Promise<Principal> {
     const principal = await requirePrincipal(request);
-    if (viewsFor(principal).length === 0) throw problem(403, 'Forbidden', 'No analytics role.');
+    if (visibleViews(principal).length === 0) throw problem(403, 'Forbidden', 'No analytics role.');
     return principal;
+  }
+
+  /** The CDP repo, after checking it is configured and the caller may see it. */
+  async function requireCdp(request: FastifyRequest): Promise<CdpRepo> {
+    const principal = await requirePrincipal(request);
+    if (!deps.cdp) throw problem(404, 'Not Found', 'The CDP is not configured on this server.');
+    if (!canView(principal, 'cdp')) throw problem(403, 'Forbidden', 'The CDP needs the analytics:cdp role.');
+    return deps.cdp;
+  }
+
+  async function cdpMeta(cdp: CdpRepo): Promise<CdpMeta> {
+    const base = await cdpResponses.getOrSet('meta', async () => {
+      const meta = await cdp.meta();
+      if (!meta) throw problem(503, 'Service Unavailable', 'The CDP has not been built yet (run scripts/build-cdp.sh).');
+      return meta;
+    });
+    return { ...(base as Omit<CdpMeta, 'generatedAt'>), generatedAt: now().toISOString() };
+  }
+
+  function invalid(issues: readonly { path: PropertyKey[]; message: string }[]): ProblemError {
+    return problem(400, 'Bad Request', 'Invalid request.', issues.map((i) => ({ path: i.path.join('.'), message: i.message })));
   }
 
   async function resolveProperty(id: number | undefined): Promise<Property> {
@@ -122,7 +158,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/api/analytics/me', async (request, reply) => {
     const principal = await requirePrincipal(request);
     reply.header('cache-control', 'private, no-store');
-    const me: Me = { subject: principal.subject, roles: principal.roles, views: viewsFor(principal), authMode: deps.config.AUTH_MODE };
+    const me: Me = { subject: principal.subject, roles: principal.roles, views: visibleViews(principal), authMode: deps.config.AUTH_MODE };
     return me;
   });
 
@@ -191,6 +227,50 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return envelope;
     });
   }
+
+  // Chickasaw CDP ----------------------------------------------------------------
+
+  app.get('/api/cdp/meta', async (request, reply) => {
+    const cdp = await requireCdp(request);
+    reply.header('cache-control', 'private, max-age=300');
+    return cdpMeta(cdp);
+  });
+
+  app.get('/api/cdp/segments', async (request, reply) => {
+    const cdp = await requireCdp(request);
+    const [meta, data] = await Promise.all([cdpMeta(cdp), cdpResponses.getOrSet('segments', () => cdp.segments())]);
+    reply.header('cache-control', 'private, max-age=300');
+    return { meta, data } as CdpEnvelope<unknown>;
+  });
+
+  app.get('/api/cdp/sites', async (request, reply) => {
+    const cdp = await requireCdp(request);
+    const [meta, data] = await Promise.all([cdpMeta(cdp), cdpResponses.getOrSet('sites', () => cdp.sites())]);
+    reply.header('cache-control', 'private, max-age=300');
+    return { meta, data } as CdpEnvelope<unknown>;
+  });
+
+  // Account numbers are personal data: they come back in bodies only, never in URLs, and
+  // nothing that carries them is cached.
+  app.get('/api/cdp/players/examples', async (request, reply) => {
+    const cdp = await requireCdp(request);
+    const parsed = SegmentQuery.safeParse(request.query);
+    if (!parsed.success) throw invalid(parsed.error.issues);
+    const [meta, data] = await Promise.all([cdpMeta(cdp), cdp.examples(parsed.data.segment)]);
+    if (!data) throw problem(404, 'Not Found', `Unknown segment ${parsed.data.segment}.`);
+    reply.header('cache-control', 'private, no-store');
+    return { meta, data } as CdpEnvelope<unknown>;
+  });
+
+  app.post('/api/cdp/players/lookup', async (request, reply) => {
+    const cdp = await requireCdp(request);
+    const parsed = LookupBody.safeParse(request.body);
+    if (!parsed.success) throw invalid(parsed.error.issues);
+    const [meta, data] = await Promise.all([cdpMeta(cdp), cdp.player(parsed.data.accountNumber)]);
+    reply.header('cache-control', 'private, no-store');
+    if (!data) throw problem(404, 'Not Found', 'No player with that Club Passport number.');
+    return { meta, data } as CdpEnvelope<unknown>;
+  });
 
   return app;
 }

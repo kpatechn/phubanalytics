@@ -1,0 +1,137 @@
+<div class="page">
+  @if (problem(); as p) {
+    <app-error-panel [problem]="p" (retry)="reload()" />
+  } @else if (data(); as d) {
+    <section class="kpi-grid" aria-label="Headline numbers">
+      <app-kpi-tile metric="cdpPlayers" [value]="fmt(d.totals.players)" />
+      <app-kpi-tile metric="cdpActive" [value]="fmt(d.totals.active)" [sub]="pct(d.totals.active, d.totals.players) + ' of players'" />
+      <app-kpi-tile metric="cdpMarketable" [value]="fmt(d.totals.marketable)" [sub]="pct(d.totals.marketable, d.totals.players) + ' of players'" />
+      <app-kpi-tile metric="cdpMultiSite" [value]="fmt(d.totals.multiSite)" [sub]="pct(d.totals.multiSite, d.totals.active) + ' of active players'" />
+      <app-kpi-tile metric="cdpAppLinked" [value]="fmt(d.totals.appLinked)" [sub]="pct(d.totals.appLinked, d.totals.players) + ' of players'" />
+      <app-kpi-tile metric="cdpExcluded" [value]="fmt(d.totals.selfExcluded)" sub="never marketed to" />
+    </section>
+
+    <section class="card" aria-labelledby="cdp-reach">
+      <div class="card-head">
+        <div>
+          <h2 id="cdp-reach">Who we can reach</h2>
+          <div class="card-sub">Every player, by channel. When a player isn't reachable, the first reason that applies is shown.</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr>
+              <th scope="col">Channel</th>
+              <th scope="col" class="num">Reachable</th>
+              <th scope="col" class="num">Share</th>
+              <th scope="col" class="num">Self-excluded</th>
+              <th scope="col" class="num">No contact</th>
+              <th scope="col" class="num">Opted out</th>
+              <th scope="col" class="num">No consent</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (c of d.channels; track c.channel) {
+              <tr>
+                <th scope="row">{{ channelLabel[c.channel] }}</th>
+                <td class="num">{{ fmt(c.reachable) }}</td>
+                <td class="num">{{ pct(c.reachable, d.totals.players) }}</td>
+                <td class="num">{{ fmt(c.selfExcluded) }}</td>
+                <td class="num">{{ fmt(c.noContact) }}</td>
+                <td class="num">{{ fmt(c.optedOut) }}</td>
+                <td class="num">{{ fmt(c.noConsent) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Email and SMS need an address or number on file, push a linked app account, mail a postal address. Opt-ins are mock until Chickasaw starts recording them.</p>
+    </section>
+
+    <section class="card" aria-labelledby="cdp-segs">
+      <div class="card-head">
+        <div>
+          <h2 id="cdp-segs">Segments</h2>
+          <div class="card-sub">{{ d.segments.length }} rules over the player profile. Self-excluded players are never members. Averages are per member, over 12 months.</div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr>
+              <th scope="col">Segment</th>
+              <th scope="col" class="num">Members</th>
+              <th scope="col" class="num">Reachable</th>
+              <th scope="col" class="num">Email</th>
+              <th scope="col" class="num">SMS</th>
+              <th scope="col" class="num">Push</th>
+              <th scope="col" class="num">Mail</th>
+              <th scope="col" class="num">Avg theo</th>
+              <th scope="col" class="num">Avg non-gaming</th>
+              <th scope="col"><span class="visually-hidden">Top players</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (s of d.segments; track s.code) {
+              <tr>
+                <th scope="row">{{ s.name }}<div class="desc">{{ s.description }}</div></th>
+                <td class="num">{{ fmt(s.members) }}</td>
+                <td class="num">{{ fmt(s.marketable) }} <span class="extra">{{ pct(s.marketable, s.members) }}</span></td>
+                <td class="num">{{ fmt(s.reach.email) }}</td>
+                <td class="num">{{ fmt(s.reach.sms) }}</td>
+                <td class="num">{{ fmt(s.reach.push) }}</td>
+                <td class="num">{{ fmt(s.reach.mail) }}</td>
+                <td class="num">{{ money(s.avgTheo) }}</td>
+                <td class="num">{{ money(s.avgNonGamingPaid) }}</td>
+                <td>
+                  <button type="button" class="btn" [attr.aria-expanded]="openSegment() === s.code" [disabled]="s.members === 0" (click)="toggle(s.code)">
+                    {{ openSegment() === s.code ? 'Hide' : 'Top players' }}
+                  </button>
+                </td>
+              </tr>
+              @if (openSegment() === s.code) {
+                <tr class="examples">
+                  <td colspan="10">
+                    <div class="rule"><span>Rule</span> <code class="mono">{{ s.rule }}</code></div>
+                    @if (exampleRows(); as rows) {
+                      <table class="data inner">
+                        <caption class="visually-hidden">Top {{ rows.length }} members of {{ s.name }} by combined value</caption>
+                        <thead>
+                          <tr>
+                            <th scope="col">Club Passport</th>
+                            <th scope="col">Tier</th>
+                            <th scope="col">Home site</th>
+                            <th scope="col" class="num">Combined value</th>
+                            <th scope="col"><span class="visually-hidden">Open</span></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          @for (x of rows; track x.accountNumber) {
+                            <tr>
+                              <td class="mono">{{ x.accountNumber }}</td>
+                              <td>{{ x.tierName }}</td>
+                              <td>{{ siteName(x.homeSite) }}</td>
+                              <td class="num">{{ money(x.combinedValue) }}</td>
+                              <td><button type="button" class="btn" (click)="openPlayer(x.accountNumber)">Player 360</button></td>
+                            </tr>
+                          }
+                        </tbody>
+                      </table>
+                    } @else if (examples().status === 'error') {
+                      <p class="note">Couldn't load players. <button type="button" class="btn" (click)="loadExamples(s.code)">Try again</button></p>
+                    } @else {
+                      <p class="note" role="status">Loading players…</p>
+                    }
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  } @else {
+    <app-skeleton />
+  }
+</div>

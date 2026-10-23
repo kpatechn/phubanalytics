@@ -34,9 +34,11 @@ CREATE TABLE cdp.feed (
 INSERT INTO cdp.feed VALUES
     ('winstar_patrons', 'profile',    'dexiga.customer_master, customer_club_level, exclusion_history', false, 'WinStar patron master sample, standing in for the synced enterprise list'),
     ('winstar_gaming',  'gaming',     'dexiga.customer_gaming_activity_summary_trip_ws',                false, 'WinStar trip summaries (DB2 CFPPAS), decoded in cdp.refresh()'),
+    ('winstar_ratings', 'gaming',     'dexiga.customer_slot_rating',                                    false, 'WinStar slot ratings, for game and denomination preferences'),
+    ('winstar_loyalty', 'loyalty',    'dexiga.host_customer_relation, rep_host_master, customer_bucket_level_summary; dexiga_main.loyalty_acsc_cfpah_ws, loyalty_acsc_cfpclva_ws', false, 'WinStar hosts, points and rewards, lifetime file and tier thresholds'),
     ('mock_sites',      'reference',  'cdp_mock.site',                                                  true,  'Site list is real; property IDs, PlayerHub IDs and systems are placeholders'),
     ('mock_tiers',      'profile',    'cdp_mock.player',                                                true,  'Tier for accounts missing from the club-level sample'),
-    ('mock_gaming',     'gaming',     'cdp_mock.gaming_trip_summary',                                   true,  'Gaming at the seven non-WinStar sites'),
+    ('mock_gaming',     'gaming',     'cdp_mock.gaming_trip_summary, cdp_mock.slot_rating',             true,  'Gaming at the seven non-WinStar sites'),
     ('mock_hotel',      'non_gaming', 'cdp_mock.hotel_stay',                                            true,  'Agilysys LMS / Stay / Versa stand-in'),
     ('mock_pos',        'non_gaming', 'cdp_mock.pos_check, cdp_mock.outlet',                            true,  'Dining and retail stand-in'),
     ('mock_spa',        'non_gaming', 'cdp_mock.spa_appointment',                                       true,  'Agilysys Spa stand-in'),
@@ -142,6 +144,73 @@ CREATE TABLE cdp.identity_link (
 );
 CREATE INDEX ON cdp.identity_link (account_number);
 
+-- ---------------------------------------------------------------- loyalty and preferences
+
+-- Tier thresholds: tier points needed to reach (low_points) each tier. Tier and points are
+-- shared across sites, so one site's loyalty system is enough; today that is WinStar's.
+CREATE TABLE cdp.tier_rule (
+    card_level  integer PRIMARY KEY,
+    tier_name   text NOT NULL,
+    tier_rank   integer NOT NULL UNIQUE,
+    low_points  numeric(14,0) NOT NULL,
+    high_points numeric(14,0)            -- NULL for the top tier
+);
+
+-- Host assignments, per site. host_name comes from the rep master (staff names).
+CREATE TABLE cdp.player_host (
+    account_number    numeric NOT NULL,
+    site_code         text NOT NULL REFERENCES cdp.site,
+    rep_code          integer NOT NULL,
+    host_name         text,
+    is_permanent      boolean NOT NULL,
+    next_arrival_date date,
+    PRIMARY KEY (account_number, site_code, rep_code)
+);
+
+-- Loyalty account figures from the lifetime file (CFPAH) and the point buckets. NULL where
+-- the WinStar sample has no row for the player. Rewards are dollars; a balance can't be
+-- derived from the sample (redemptions exceed earnings for many players), so none is kept.
+-- CFPAH decode: ltdtah trips, ttwlah win/loss (player side), ltdcah comps (sentinels below 0
+-- dropped), acelah / acwlah action cash earned / used, lvptah tier points, lvdtah tier
+-- expiry, dtaah date added, dtlaah last activity (dates as days since 1899-12-30).
+CREATE TABLE cdp.player_loyalty (
+    account_number            numeric PRIMARY KEY,
+    member_since              date,
+    last_activity_date        date,
+    lifetime_trips            integer,
+    lifetime_casino_win       numeric(16,2),
+    lifetime_comps            numeric(16,2),
+    action_cash_earned        numeric(14,2),
+    action_cash_used          numeric(14,2),
+    tier_points               numeric(14,0),
+    tier_expires              date,
+    points_lifetime           numeric(16,0),
+    points_year               numeric(16,0),
+    points_year_label         text,
+    rewards_earned_lifetime   numeric(14,2),
+    rewards_redeemed_lifetime numeric(14,2),
+    rewards_adjusted_lifetime numeric(14,2),
+    rewards_expired_lifetime  numeric(14,2),
+    rewards_earned_year       numeric(14,2),
+    rewards_redeemed_year     numeric(14,2)
+);
+
+-- What each player plays and when, over the 12 months. Game and denomination by slot coin-in
+-- (WinStar's real ratings plus the mocked sites'); weekday and time of day by gaming trips.
+-- Game names aren't loaded in GEM (games master empty), so games are the loyalty system's codes.
+CREATE TABLE cdp.player_preference (
+    account_number      numeric PRIMARY KEY,
+    top_game            text,
+    top_game_share      numeric(5,4),
+    top_denomination    numeric(9,2),
+    top_denomination_share numeric(5,4),
+    slot_ratings        integer NOT NULL,
+    favorite_weekday    integer,         -- ISO: 1 Monday .. 7 Sunday
+    weekday_share       numeric(5,4),
+    favorite_daypart    text CHECK (favorite_daypart IN ('morning', 'afternoon', 'evening', 'late night')),
+    daypart_share       numeric(5,4)
+);
+
 -- ---------------------------------------------------------------- player views
 
 -- Last 12 months per player and site.
@@ -209,7 +278,22 @@ CREATE TABLE cdp.player_profile (
     app_last_active_at    timestamptz,
     reachable_channels    text[] NOT NULL,
     is_marketable         boolean NOT NULL,
-    has_mock_data         boolean NOT NULL
+    has_mock_data         boolean NOT NULL,
+    -- From cdp.player_host, cdp.player_loyalty, cdp.tier_rule and cdp.player_preference.
+    host_rep_code         integer,              -- permanent host first, then any
+    host_name             text,
+    tier_points           numeric(14,0),
+    keep_tier_points      numeric(14,0),        -- points the current tier needs
+    next_tier_name        text,
+    next_tier_points      numeric(14,0),
+    points_to_next_tier   numeric(14,0),
+    tier_expires          date,
+    lifetime_trips        integer,
+    lifetime_casino_win   numeric(16,2),
+    top_game              text,
+    top_denomination      numeric(9,2),
+    favorite_weekday      integer,
+    favorite_daypart      text
 );
 CREATE INDEX ON cdp.player_profile (home_site_code);
 
@@ -238,10 +322,12 @@ CREATE TABLE cdp.segment (
 INSERT INTO cdp.segment VALUES
     ('champions',            'Champions',                    'Recent, frequent and high value',                                  'rfm_recency >= 4 AND rfm_frequency >= 4 AND rfm_monetary >= 4', 10),
     ('high_value_at_risk',   'High value at risk',           'Top-two value quintiles, but in the two least recent',             'rfm_monetary >= 4 AND rfm_recency <= 2', 20),
+    ('hosted_going_quiet',   'Hosted players going quiet',   'Players with a host, in the two least recent quintiles',           'host_rep_code IS NOT NULL AND rfm_recency <= 2', 25),
     ('new_players',          'New players',                  'Signed up in the last 90 days',                                    'tenure_days < 90', 30),
     ('one_visit',            'One visit, not back',          'One visit day in 12 months, more than 60 days ago',                'visit_days_12m = 1 AND recency_days > 60', 40),
     ('lapsed',               'Lapsed',                       'Members for a year or more with no activity in 12 months',         'visit_days_12m = 0 AND tenure_days >= 365', 50),
     ('multi_site',           'Multi-site players',           'Activity at two or more sites in 12 months',                       'sites_visited_12m >= 2', 60),
+    ('near_next_tier',       'Close to the next tier',       'Within 20% of the next tier''s tier points',                       'points_to_next_tier > 0 AND points_to_next_tier <= next_tier_points * 0.2', 65),
     ('ok_winstar_only',      'Oklahomans who only visit WinStar', 'Oklahoma residents whose only site in 12 months is WinStar', 'home_region = ''OK'' AND site_codes_12m = ARRAY[''WINSTAR'']', 70),
     ('hotel_guests',         'Hotel guests',                 'At least one completed stay in 12 months',                         'hotel_stays_12m >= 1', 80),
     ('non_gaming_led',       'Non-gaming led',               'Non-gaming is 40%+ of value, and at least $200 paid',              'non_gaming_paid_12m >= 200 AND non_gaming_share >= 0.4', 90),
@@ -278,6 +364,7 @@ BEGIN
     INSERT INTO cdp.refresh_run (started_at) VALUES (clock_timestamp()) RETURNING run_id INTO v_run_id;
 
     TRUNCATE cdp.segment_member, cdp.reachability, cdp.player_profile, cdp.player_site_summary,
+             cdp.player_preference, cdp.player_loyalty, cdp.player_host, cdp.tier_rule,
              cdp.identity_link, cdp.non_gaming_activity, cdp.gaming_activity, cdp.site;
 
     -- Sites. Feed: mock_sites.
@@ -285,6 +372,74 @@ BEGIN
     SELECT site_code, site_name, city, loyalty_corporate_id, loyalty_property_id, playerhub_property_id, time_zone,
            CASE gaming_source WHEN 'real' THEN 'winstar_gaming' ELSE 'mock_gaming' END
     FROM cdp_mock.site;
+
+    -- Loyalty extras. Feed: winstar_loyalty (real). Only rows whose corporate + property ID
+    -- belongs to a known site are used.
+    INSERT INTO cdp.tier_rule
+    SELECT crlvclva::integer, trim(crdsclva), rank() OVER (ORDER BY lovaclva), lovaclva, nullif(hivaclva, 9999999)
+    FROM dexiga_main.loyalty_acsc_cfpclva_ws
+    WHERE trim(statclva) = 'A';
+
+    INSERT INTO cdp.player_host
+    SELECT DISTINCT ON (h.account_number, s.site_code, h.rep_code)
+           h.account_number, s.site_code, h.rep_code::integer,
+           nullif(concat_ws(' ', nullif(trim(r.rep_first_name), ''), nullif(trim(r.rep_last_name), '')), ''),
+           trim(h.permanently_assigned_yn) IS NOT DISTINCT FROM 'Y',
+           CASE WHEN h.next_arrival_date > 0 THEN date '1899-12-30' + h.next_arrival_date::integer END
+    FROM dexiga.host_customer_relation h
+    JOIN cdp.site s ON s.corporate_id = trim(h.corporate_id) AND s.property_id = trim(h.property_id)
+    LEFT JOIN dexiga.rep_host_master r
+           ON r.rep_code = h.rep_code AND trim(r.corporate_id) = trim(h.corporate_id) AND trim(r.property_id) = trim(h.property_id)
+    ORDER BY h.account_number, s.site_code, h.rep_code, h.date_modified DESC NULLS LAST, h.time_modified DESC NULLS LAST;
+
+    INSERT INTO cdp.player_loyalty
+    WITH lifetime AS (
+        SELECT DISTINCT ON (a.acctah)
+               a.acctah AS account_number,
+               CASE WHEN a.dtaah > 0 THEN date '1899-12-30' + a.dtaah::integer END AS member_since,
+               CASE WHEN a.dtlaah > 0 THEN date '1899-12-30' + a.dtlaah::integer END AS last_activity_date,
+               CASE WHEN a.ltdtah >= 0 THEN a.ltdtah::integer END AS lifetime_trips,
+               -a.ttwlah AS lifetime_casino_win,
+               CASE WHEN a.ltdcah BETWEEN 0 AND 1000000000 THEN a.ltdcah END AS lifetime_comps,
+               a.acelah AS action_cash_earned, a.acwlah AS action_cash_used,
+               a.lvptah AS tier_points,
+               CASE WHEN a.lvdtah > 0 THEN date '1899-12-30' + a.lvdtah::integer END AS tier_expires
+        FROM dexiga_main.loyalty_acsc_cfpah_ws a
+        JOIN cdp.site s ON s.corporate_id = trim(a.cpidah) AND s.property_id = trim(a.pridah)
+        ORDER BY a.acctah, a.dtlaah DESC NULLS LAST
+    ),
+    -- All-play rows; the latest year per bucket for the "year" figures.
+    bucket AS (
+        SELECT DISTINCT ON (b.account_number, trim(b.bucket_id), trim(b.summary_level_code))
+               b.account_number, trim(b.bucket_id) AS bucket, trim(b.summary_level_code) AS lvl,
+               trim(b.summary_level_value) AS val, b.points_earned, b.total_earned_amount, b.total_redemption_amount,
+               b.total_adjusted_amount, b.total_purged_amount
+        FROM dexiga.customer_bucket_level_summary b
+        JOIN cdp.site s ON s.corporate_id = trim(b.corporate_id) AND s.property_id = trim(b.property_id)
+        WHERE coalesce(trim(b.play_type), '') = '' AND trim(b.summary_level_code) IN ('L', 'Y')
+        ORDER BY b.account_number, trim(b.bucket_id), trim(b.summary_level_code), trim(b.summary_level_value) DESC
+    ),
+    buckets AS (
+        SELECT account_number,
+               max(points_earned) FILTER (WHERE bucket = 'PTTRACK' AND lvl = 'L') AS points_lifetime,
+               max(points_earned) FILTER (WHERE bucket = 'PTTRACK' AND lvl = 'Y') AS points_year,
+               max(val) FILTER (WHERE bucket = 'PTTRACK' AND lvl = 'Y') AS points_year_label,
+               max(total_earned_amount) FILTER (WHERE bucket = 'REWARDS' AND lvl = 'L') AS rewards_earned_lifetime,
+               max(total_redemption_amount) FILTER (WHERE bucket = 'REWARDS' AND lvl = 'L') AS rewards_redeemed_lifetime,
+               max(total_adjusted_amount) FILTER (WHERE bucket = 'REWARDS' AND lvl = 'L') AS rewards_adjusted_lifetime,
+               max(abs(total_purged_amount)) FILTER (WHERE bucket = 'REWARDS' AND lvl = 'L') AS rewards_expired_lifetime,
+               max(total_earned_amount) FILTER (WHERE bucket = 'REWARDS' AND lvl = 'Y') AS rewards_earned_year,
+               max(total_redemption_amount) FILTER (WHERE bucket = 'REWARDS' AND lvl = 'Y') AS rewards_redeemed_year
+        FROM bucket GROUP BY 1
+    )
+    SELECT coalesce(l.account_number, b.account_number),
+           l.member_since, l.last_activity_date, l.lifetime_trips, l.lifetime_casino_win, l.lifetime_comps,
+           l.action_cash_earned, l.action_cash_used, l.tier_points, l.tier_expires,
+           b.points_lifetime, b.points_year, b.points_year_label,
+           b.rewards_earned_lifetime, b.rewards_redeemed_lifetime, b.rewards_adjusted_lifetime, b.rewards_expired_lifetime,
+           b.rewards_earned_year, b.rewards_redeemed_year
+    FROM lifetime l
+    FULL JOIN buckets b USING (account_number);
 
     -- Gaming. Feed: winstar_gaming. CFPPAS columns, decoded by position against GEM's own
     -- readable layouts (dexiga.customer_gaming_activity_summary, dexiga_analytical.gaming_activity_slots_summary):
@@ -401,6 +556,66 @@ BEGIN
                     (SELECT max(activity_date) FROM cdp.gaming_activity WHERE days_played > 0 OR theo > 0))
     INTO v_as_of;
     v_from := v_as_of - 364;
+
+    -- Preferences. Feeds: winstar_ratings, mock_gaming (slot ratings); trips from cdp.gaming_activity.
+    -- Ties go to the larger coin-in or theo, then the lower code, so reruns agree.
+    INSERT INTO cdp.player_preference
+    WITH rating AS (
+        SELECT r.account_number, trim(r.game_id) AS game_id, r.slot_denomination AS denomination, r.coin_in_dollars_cents AS coin_in
+        FROM dexiga.customer_slot_rating r
+        JOIN cdp.site s ON s.corporate_id = trim(r.corporate_id) AND s.property_id = trim(r.property_id)
+        WHERE date '1899-12-30' + r.transaction_date_hun_year::integer BETWEEN v_from AND v_as_of
+        UNION ALL
+        SELECT account_number, trim(game_id), slot_denomination, coin_in_dollars_cents
+        FROM cdp_mock.slot_rating
+        WHERE date '1899-12-30' + transaction_date_hun_year::integer BETWEEN v_from AND v_as_of
+    ),
+    game AS (
+        SELECT DISTINCT ON (account_number) account_number, game_id, coin_in / nullif(total, 0) AS share
+        FROM (SELECT account_number, game_id, sum(coin_in) AS coin_in, sum(sum(coin_in)) OVER (PARTITION BY account_number) AS total
+              FROM rating WHERE game_id <> '' GROUP BY 1, 2) g
+        ORDER BY account_number, coin_in DESC, game_id
+    ),
+    denomination AS (
+        SELECT DISTINCT ON (account_number) account_number, denomination, coin_in / nullif(total, 0) AS share
+        FROM (SELECT account_number, denomination, sum(coin_in) AS coin_in, sum(sum(coin_in)) OVER (PARTITION BY account_number) AS total
+              FROM rating WHERE denomination > 0 GROUP BY 1, 2) d
+        ORDER BY account_number, coin_in DESC, denomination
+    ),
+    rated AS (SELECT account_number, count(*) AS n FROM rating GROUP BY 1),
+    trip AS (
+        SELECT account_number, activity_date, min(trip_start) AS trip_start, sum(theo) AS theo
+        FROM cdp.gaming_activity
+        WHERE activity_date BETWEEN v_from AND v_as_of AND (days_played > 0 OR theo > 0)
+        GROUP BY account_number, site_code, activity_date
+    ),
+    weekday AS (
+        SELECT DISTINCT ON (account_number) account_number, dow, trips::numeric / total AS share
+        FROM (SELECT account_number, extract(isodow FROM activity_date)::integer AS dow, count(*) AS trips, sum(theo) AS theo,
+                     sum(count(*)) OVER (PARTITION BY account_number) AS total
+              FROM trip GROUP BY 1, 2) w
+        ORDER BY account_number, trips DESC, theo DESC, dow
+    ),
+    daypart AS (
+        SELECT DISTINCT ON (account_number) account_number, part, trips::numeric / total AS share
+        FROM (SELECT account_number,
+                     CASE WHEN trip_start >= '06:00' AND trip_start < '12:00' THEN 'morning'
+                          WHEN trip_start >= '12:00' AND trip_start < '17:00' THEN 'afternoon'
+                          WHEN trip_start >= '17:00' AND trip_start < '22:00' THEN 'evening'
+                          ELSE 'late night' END AS part,
+                     count(*) AS trips, sum(count(*)) OVER (PARTITION BY account_number) AS total
+              FROM trip WHERE trip_start IS NOT NULL GROUP BY 1, 2) p
+        ORDER BY account_number, trips DESC, part
+    ),
+    players AS (SELECT account_number FROM rated UNION SELECT account_number FROM weekday)
+    SELECT x.account_number, g.game_id, round(g.share, 4), d.denomination, round(d.share, 4), coalesce(r.n, 0),
+           w.dow, round(w.share, 4), p.part, round(p.share, 4)
+    FROM players x
+    LEFT JOIN game g USING (account_number)
+    LEFT JOIN denomination d USING (account_number)
+    LEFT JOIN rated r USING (account_number)
+    LEFT JOIN weekday w USING (account_number)
+    LEFT JOIN daypart p USING (account_number);
 
     -- Per player and site. A gaming trip is a (player, site, day) with play; its days are the
     -- longest days_played among its game types, so slots + tables on one trip count once.
@@ -581,9 +796,23 @@ BEGIN
            round(x.ng_paid / nullif(x.ng_paid + x.theo, 0), 4), x.theo + x.ng_paid,
            f.r, f.f, f.m,
            x.user_id, x.linked_at, x.app_days, x.last_active,
-           x.channels, cardinality(x.channels) > 0, x.has_mock
+           x.channels, cardinality(x.channels) > 0, x.has_mock,
+           hs.rep_code, hs.host_name,
+           lo.tier_points, cur.low_points, nxt.tier_name, nxt.low_points,
+           CASE WHEN lo.tier_points IS NOT NULL AND nxt.low_points IS NOT NULL THEN greatest(nxt.low_points - lo.tier_points, 0) END,
+           lo.tier_expires, lo.lifetime_trips, lo.lifetime_casino_win,
+           pr.top_game, pr.top_denomination, pr.favorite_weekday, pr.favorite_daypart
     FROM assembled x
-    LEFT JOIN rfm f USING (account_number);
+    LEFT JOIN rfm f USING (account_number)
+    LEFT JOIN cdp.player_loyalty lo USING (account_number)
+    LEFT JOIN cdp.player_preference pr USING (account_number)
+    LEFT JOIN LATERAL (
+        SELECT h.rep_code, h.host_name FROM cdp.player_host h
+        WHERE h.account_number = x.account_number
+        ORDER BY h.is_permanent DESC, h.site_code, h.rep_code LIMIT 1
+    ) hs ON true
+    LEFT JOIN cdp.tier_rule cur ON cur.tier_rank = x.tier_rank
+    LEFT JOIN cdp.tier_rule nxt ON nxt.tier_rank = x.tier_rank + 1;
 
     -- Segments.
     FOR seg IN SELECT segment_code, rule FROM cdp.segment ORDER BY sort_order LOOP
@@ -598,6 +827,9 @@ BEGIN
             'non_gaming_activity', (SELECT count(*) FROM cdp.non_gaming_activity),
             'identity_link',       (SELECT count(*) FROM cdp.identity_link),
             'player_site_summary', (SELECT count(*) FROM cdp.player_site_summary),
+            'player_host',         (SELECT count(*) FROM cdp.player_host),
+            'player_loyalty',      (SELECT count(*) FROM cdp.player_loyalty),
+            'player_preference',   (SELECT count(*) FROM cdp.player_preference),
             'player_profile',      (SELECT count(*) FROM cdp.player_profile),
             'reachability',        (SELECT count(*) FROM cdp.reachability),
             'segment_member',      (SELECT count(*) FROM cdp.segment_member))

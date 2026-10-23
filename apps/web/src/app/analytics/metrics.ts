@@ -171,6 +171,81 @@ export const METRICS = {
     definition: 'Scheduled job runs that started over an hour ago and never finished.',
     source: 'Scheduled job log (dextrans dexcron.jobStatus)',
   },
+
+  // Chickasaw CDP. "12 months" ends on the CDP's as-of date.
+  cdpPlayers: {
+    label: 'Players',
+    definition: 'Club Passport accounts in the patron master.',
+    source: 'cdp.player_profile (WinStar patron master)',
+    caveat: 'Dev holds a sample of the enterprise list.',
+  },
+  cdpActive: {
+    label: 'Active in 12 months',
+    definition: 'Players with a gaming trip or a completed hotel, dining, retail, spa or golf record at any site in the 12 months.',
+    source: 'cdp.player_site_summary',
+    caveat: 'Gaming outside WinStar and all non-gaming are mock data.',
+  },
+  cdpMarketable: {
+    label: 'Marketable',
+    definition: 'Players we may contact on at least one channel: a contact on file, a current opt-in, and not self-excluded.',
+    source: 'cdp.reachability',
+    caveat: 'Opt-ins are mock: Chickasaw keeps none yet.',
+  },
+  cdpMultiSite: {
+    label: 'Multi-site players',
+    definition: 'Players active at two or more sites in the 12 months.',
+    source: 'cdp.player_profile.sites_visited_12m',
+    caveat: 'Play outside WinStar is mock data.',
+  },
+  cdpAppLinked: {
+    label: 'App linked',
+    definition: 'Players whose Chickasaw app account is linked to their Club Passport number.',
+    source: 'cdp.identity_link (app_user)',
+    caveat: 'App users and events are mock data.',
+  },
+  cdpExcluded: {
+    label: 'Self-excluded',
+    definition: 'Players with an entry in the exclusion history. Never reachable and never in a segment.',
+    source: 'dexiga.exclusion_history (real)',
+    caveat: 'Exclusions have no expiry logic yet.',
+  },
+  cdpTheo: {
+    label: 'Theo, 12 months',
+    definition: 'Theoretical win from rated play at every site.',
+    source: 'cdp.gaming_activity',
+  },
+  cdpAdt: {
+    label: 'ADT',
+    definition: 'Average daily theo: theo divided by gaming days.',
+    source: 'cdp.player_profile.adt_12m',
+  },
+  cdpVisitDays: {
+    label: 'Visit days',
+    definition: 'Days with a gaming trip or completed non-gaming activity, counted per site and added up.',
+    source: 'cdp.player_site_summary',
+  },
+  cdpNonGaming: {
+    label: 'Non-gaming paid',
+    definition: 'Hotel, dining, retail, spa and golf paid for, before tax and tips. Comps and points are left out.',
+    source: 'cdp.non_gaming_activity',
+    caveat: 'All non-gaming is mock data until the Agilysys feeds arrive.',
+  },
+  cdpCombined: {
+    label: 'Combined value',
+    definition: 'Theo plus non-gaming paid over the 12 months. Drives the value (M) score.',
+    source: 'cdp.player_profile.combined_value_12m',
+  },
+  cdpComps: {
+    label: 'Comps issued',
+    definition: 'Gaming comps on trip summaries: food, beverage, room and other.',
+    source: 'cdp.gaming_activity',
+  },
+  cdpAppDays: {
+    label: 'App days, last 90',
+    definition: 'Days with any app event in the last 90 days of the window.',
+    source: 'cdp_mock.app_event',
+    caveat: 'Mock data.',
+  },
 } satisfies Record<string, MetricDefinition>;
 
 export type MetricKey = keyof typeof METRICS;

@@ -107,6 +107,38 @@ SELECT 'info: real WinStar activity for accounts missing from the patron master 
        (SELECT count(DISTINCT account_number) || ' accounts (sampling gap; not in profiles)'
         FROM cdp.gaming_activity g WHERE NOT EXISTS (SELECT 1 FROM master m WHERE m.account_number = g.account_number));
 
+-- Loyalty and preferences.
+INSERT INTO cdp_check
+SELECT 'tier thresholds run from 0 upward without gaps',
+       (SELECT bool_and(t.low_points = coalesce(p.high_points + 1, 0)) FROM cdp.tier_rule t LEFT JOIN cdp.tier_rule p ON p.tier_rank = t.tier_rank - 1)
+       AND (SELECT count(*) FROM cdp.tier_rule WHERE high_points IS NULL) = 1,
+       (SELECT string_agg(tier_name || ' ' || low_points, ', ' ORDER BY tier_rank) FROM cdp.tier_rule)
+UNION ALL
+SELECT 'every WinStar lifetime and bucket account has a loyalty row',
+       (SELECT count(*) FROM cdp.player_loyalty)
+       = (SELECT count(*) FROM (SELECT acctah FROM dexiga_main.loyalty_acsc_cfpah_ws a JOIN cdp.site s ON s.corporate_id = trim(a.cpidah) AND s.property_id = trim(a.pridah)
+                                UNION SELECT account_number FROM dexiga.customer_bucket_level_summary b JOIN cdp.site s ON s.corporate_id = trim(b.corporate_id) AND s.property_id = trim(b.property_id)) x),
+       (SELECT count(*) || ' loyalty rows, ' || count(*) FILTER (WHERE lifetime_comps IS NULL AND lifetime_trips IS NOT NULL) || ' with an invalid lifetime comp value dropped' FROM cdp.player_loyalty)
+UNION ALL
+SELECT 'tier progress = next tier threshold - tier points',
+       NOT EXISTS (SELECT 1 FROM cdp.player_profile
+                   WHERE points_to_next_tier IS DISTINCT FROM CASE WHEN tier_points IS NOT NULL AND next_tier_points IS NOT NULL THEN greatest(next_tier_points - tier_points, 0) END)
+       AND NOT EXISTS (SELECT 1 FROM cdp.player_profile p JOIN cdp.tier_rule t ON t.tier_rank = p.tier_rank + 1 WHERE p.next_tier_name IS DISTINCT FROM t.tier_name)
+       AND NOT EXISTS (SELECT 1 FROM cdp.player_profile WHERE tier_rank = (SELECT max(tier_rank) FROM cdp.tier_rule) AND next_tier_name IS NOT NULL),
+       (SELECT count(*) FILTER (WHERE tier_points IS NOT NULL) || ' profiles with tier points' FROM cdp.player_profile)
+UNION ALL
+SELECT 'profile host matches the host table',
+       NOT EXISTS (SELECT 1 FROM cdp.player_profile p
+                   WHERE (p.host_rep_code IS NOT NULL) <> EXISTS (SELECT 1 FROM cdp.player_host h WHERE h.account_number = p.account_number)),
+       (SELECT count(*) FILTER (WHERE host_rep_code IS NOT NULL) || ' profiles with a host' FROM cdp.player_profile)
+UNION ALL
+SELECT 'preference shares are 0-1 and need ratings or trips',
+       NOT EXISTS (SELECT 1 FROM cdp.player_preference
+                   WHERE top_game_share NOT BETWEEN 0 AND 1 OR top_denomination_share NOT BETWEEN 0 AND 1
+                      OR weekday_share NOT BETWEEN 0 AND 1 OR daypart_share NOT BETWEEN 0 AND 1
+                      OR favorite_weekday NOT BETWEEN 1 AND 7 OR (top_game IS NOT NULL AND slot_ratings = 0)),
+       (SELECT count(*) FILTER (WHERE top_game IS NOT NULL) || ' with a top game, ' || count(*) FILTER (WHERE favorite_weekday IS NOT NULL) || ' with a favorite day' FROM cdp.player_preference);
+
 -- Segments: every member meets its rule and isn't self-excluded, and nobody who qualifies is missing.
 DO $$
 DECLARE

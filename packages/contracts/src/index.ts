@@ -3,8 +3,8 @@
 // name says guests or accounts.
 
 export type Environment = 'prod' | 'staging' | 'dev';
-export type View = 'executive' | 'engagement' | 'marketing' | 'it';
-export type Role = 'analytics:exec' | 'analytics:marketing' | 'analytics:it' | 'analytics:admin';
+export type View = 'executive' | 'engagement' | 'marketing' | 'it' | 'cdp';
+export type Role = 'analytics:exec' | 'analytics:marketing' | 'analytics:it' | 'analytics:cdp' | 'analytics:admin';
 
 export interface Property {
   tenantId: number;
@@ -303,3 +303,259 @@ export type ExecutiveResponse = Envelope<ExecutiveData>;
 export type EngagementResponse = Envelope<EngagementData>;
 export type MarketingResponse = Envelope<MarketingData>;
 export type ItResponse = Envelope<ItData>;
+
+
+// Chickasaw CDP prototype: GET /api/cdp/*, POST /api/cdp/players/lookup (database dexiga,
+// schema cdp). Money in dollars; "12 months" ends meta.asOfDate. Account numbers are
+// Club Passport numbers, sent as strings and never put in URLs.
+
+export type CdpChannel = 'email' | 'sms' | 'push' | 'mail';
+export type CdpReachReason = 'reachable' | 'self_excluded' | 'no_contact' | 'opted_out' | 'no_consent';
+export type CdpActivityKind = 'gaming' | 'hotel' | 'dining' | 'retail' | 'spa' | 'golf';
+
+/** One source the CDP reads. Mock feeds are generated stand-ins for data we can't reach yet. */
+export interface CdpFeed {
+  code: string;
+  area: string;
+  source: string;
+  isMock: boolean;
+  notes: string;
+}
+
+export interface CdpMeta {
+  client: string;
+  /** Last day of the 12-month window. */
+  asOfDate: string;
+  windowFrom: string;
+  /** When cdp.refresh() last finished (ISO timestamp). */
+  refreshedAt: string;
+  generatedAt: string;
+  feeds: CdpFeed[];
+  sites: { code: string; name: string; gamingIsMock: boolean }[];
+}
+
+export interface CdpEnvelope<T> {
+  meta: CdpMeta;
+  data: T;
+}
+
+export interface CdpTotals {
+  players: number;
+  /** Any activity in the 12 months. */
+  active: number;
+  /** Reachable on at least one channel. */
+  marketable: number;
+  multiSite: number;
+  selfExcluded: number;
+  appLinked: number;
+}
+
+export interface CdpChannelReach {
+  channel: CdpChannel;
+  reachable: number;
+  selfExcluded: number;
+  noContact: number;
+  optedOut: number;
+  noConsent: number;
+}
+
+export interface CdpSegment {
+  code: string;
+  name: string;
+  description: string;
+  /** SQL condition on the player profile. */
+  rule: string;
+  members: number;
+  /** Members reachable on each channel, and on any. */
+  reach: Record<CdpChannel, number>;
+  marketable: number;
+  avgTheo: number;
+  avgNonGamingPaid: number;
+}
+
+export interface CdpSegmentsData {
+  totals: CdpTotals;
+  channels: CdpChannelReach[];
+  segments: CdpSegment[];
+}
+
+export interface CdpSite {
+  siteCode: string;
+  name: string;
+  city: string;
+  propertyId: string;
+  /** Whether this site's gaming comes from a mock feed. */
+  gamingIsMock: boolean;
+  /** Players whose home site this is. */
+  homePlayers: number;
+  /** Players with any activity here in the 12 months. */
+  activePlayers: number;
+  /** Of those, players also active at another site. */
+  alsoOtherSites: number;
+  visitDays: number;
+  trips: number;
+  theo: number;
+  casinoWin: number;
+  compsIssued: number;
+  /** Paid non-gaming in the 12 months, all guests (known or not). */
+  nonGaming: Record<Exclude<CdpActivityKind, 'gaming'>, number>;
+  nonGamingPaid: number;
+  /** Share of nonGamingPaid from guests linked to a Club Passport number. */
+  knownGuestShare: number | null;
+}
+
+export interface CdpSitesData {
+  sites: CdpSite[];
+  /** Players by home site who were also active at another site. */
+  crossVisits: { homeSite: string; visitedSite: string; players: number }[];
+}
+
+export interface CdpExample {
+  accountNumber: string;
+  tierName: string;
+  homeSite: string | null;
+  combinedValue: number;
+}
+
+export interface CdpPlayerSite {
+  siteCode: string;
+  visitDays: number;
+  trips: number;
+  gamingDays: number;
+  theo: number;
+  casinoWin: number;
+  compsIssued: number;
+  nonGamingPaid: number;
+  nonGamingComp: number;
+  firstVisit: string | null;
+  lastVisit: string | null;
+}
+
+export interface CdpActivity {
+  date: string;
+  siteCode: string;
+  kind: CdpActivityKind;
+  detail: string;
+  /** Theo for gaming, paid amount otherwise. */
+  value: number;
+  comp: number;
+  status: 'completed' | 'cancelled' | 'no_show';
+  /** card, email (matched by a unique email) or null for gaming. */
+  identityMethod: 'card' | 'email' | null;
+  isMock: boolean;
+}
+
+export interface CdpPlayerReach {
+  channel: CdpChannel;
+  reachable: boolean;
+  reason: CdpReachReason;
+  hasContact: boolean;
+  consentStatus: 'opt_in' | 'opt_out' | 'none';
+  consentAt: string | null;
+}
+
+export interface CdpPlayerProfile {
+  tierName: string;
+  tierSource: 'real' | 'mock';
+  residentialState: string | null;
+  homeRegion: string;
+  signupDate: string;
+  tenureDays: number;
+  isExcluded: boolean;
+  homeSite: string | null;
+  siteCodes: string[];
+  firstActivity: string | null;
+  lastActivity: string | null;
+  recencyDays: number | null;
+  visitDays: number;
+  trips: number;
+  gamingDays: number;
+  theo: number;
+  adt: number | null;
+  casinoWin: number;
+  slotTheoShare: number | null;
+  compsIssued: number;
+  reinvestmentRate: number | null;
+  hotelStays: number;
+  hotelNights: number;
+  nonGaming: Record<Exclude<CdpActivityKind, 'gaming'>, number>;
+  nonGamingPaid: number;
+  nonGamingComp: number;
+  nonGamingShare: number | null;
+  combinedValue: number;
+  /** 1-5 each among players active in the 12 months; null when inactive. */
+  rfm: { recency: number; frequency: number; monetary: number } | null;
+  app: { linked: boolean; linkedAt: string | null; activeDays90: number; lastActiveAt: string | null };
+  reachableChannels: CdpChannel[];
+  hasMockData: boolean;
+}
+
+export interface CdpPlayerHost {
+  siteCode: string;
+  repCode: number;
+  /** Staff name from the loyalty system's rep master; null when the rep isn't listed. */
+  name: string | null;
+  permanent: boolean;
+  nextArrival: string | null;
+}
+
+/** Loyalty account figures from the WinStar loyalty system. Tier and points are shared across sites. */
+export interface CdpLoyalty {
+  memberSince: string | null;
+  lastActivity: string | null;
+  lifetimeTrips: number | null;
+  /** Positive = the player lost. */
+  lifetimeCasinoWin: number | null;
+  lifetimeComps: number | null;
+  actionCashEarned: number | null;
+  actionCashUsed: number | null;
+  /** Tier points counting toward status, and when the current status expires. */
+  tierPoints: number | null;
+  tierExpires: string | null;
+  /** Points the current tier needs (0 for the base tier). */
+  keepTierPoints: number | null;
+  nextTier: string | null;
+  nextTierPoints: number | null;
+  pointsToNextTier: number | null;
+  points: { lifetime: number | null; year: number | null; yearLabel: string | null };
+  /** Reward dollars. No balance: the sample can't support one. */
+  rewards: {
+    earnedLifetime: number | null;
+    redeemedLifetime: number | null;
+    adjustedLifetime: number | null;
+    expiredLifetime: number | null;
+    earnedYear: number | null;
+    redeemedYear: number | null;
+  };
+}
+
+export interface CdpPreferences {
+  /** Loyalty system game code (game names aren't loaded yet). */
+  topGame: string | null;
+  topGameShare: number | null;
+  topDenomination: number | null;
+  topDenominationShare: number | null;
+  slotRatings: number;
+  /** ISO weekday, 1 Monday .. 7 Sunday. */
+  favoriteWeekday: number | null;
+  weekdayShare: number | null;
+  favoriteDaypart: 'morning' | 'afternoon' | 'evening' | 'late night' | null;
+  daypartShare: number | null;
+}
+
+export interface CdpPlayer {
+  accountNumber: string;
+  profile: CdpPlayerProfile;
+  hosts: CdpPlayerHost[];
+  /** Null when the WinStar loyalty sample has no lifetime or points row for the player. */
+  loyalty: CdpLoyalty | null;
+  /** Null when the player has no rated play or trips in the 12 months. */
+  preferences: CdpPreferences | null;
+  sites: CdpPlayerSite[];
+  /** Latest 30 activities: gaming trips and non-gaming records. */
+  recent: CdpActivity[];
+  reach: CdpPlayerReach[];
+  segments: { code: string; name: string }[];
+  /** Which identifiers point to this account. Values are never sent. */
+  identifiers: { type: 'email' | 'mobile' | 'app_user'; verified: boolean }[];
+}

@@ -12,7 +12,7 @@ import { Session } from './session';
         @if (session.problem(); as p) {
           <p>{{ p.title }}{{ p.detail ? ': ' + p.detail : '' }}</p>
         } @else {
-          <p>Your account has no analytics role. Ask an administrator for analytics:exec, analytics:marketing or analytics:it.</p>
+          <p>Your account has no analytics role. Ask an administrator for analytics:exec, analytics:marketing, analytics:it or analytics:cdp.</p>
         }
       </div>
     </div>

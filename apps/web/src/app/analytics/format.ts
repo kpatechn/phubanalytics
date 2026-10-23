@@ -14,9 +14,24 @@ export const fmtRate = (part: number, whole: number): string => (whole > 0 ? pct
 
 export const fmtSeconds = (s: number | null): string => (s === null ? '–' : `${oneDecimal.format(s)} s`);
 
+const usd0 = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const usdCompact = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1 });
+
+/** $512, $9,870, then $12.3K, $4.5M. */
+export const fmtMoney = (n: number): string => (Math.abs(n) >= 10_000 ? usdCompact.format(n) : usd0.format(n));
+
+/** A share already computed as 0..1; '–' when unknown. */
+export const fmtShare = (share: number | null): string => (share === null ? '–' : pct0.format(share));
+
 /** 'Sep 3' for a YYYY-MM-DD date (no time zone shift). */
 export function fmtDay(day: string): string {
   return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+/** 'Sep 3, 2025' for a YYYY-MM-DD date; '–' when missing. */
+export function fmtDate(day: string | null): string {
+  if (!day) return '–';
+  return new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
 export function fmtRange(from: string, to: string): string {

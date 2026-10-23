@@ -1,12 +1,15 @@
 import { createRemoteJWKSet } from 'jose';
 import { buildApp } from './app.js';
 import { devAuthenticator, jwtAuthenticator } from './auth.js';
+import { createCdpRepo } from './cdp.js';
 import { loadConfig } from './config.js';
 import { createSql } from './db.js';
 import { createRepo } from './repo.js';
 
 const config = loadConfig();
 const sql = createSql(config);
+// The Chickasaw CDP lives in another database (GEM); its own read-only pool.
+const gemSql = config.GEM_DATABASE_URL ? createSql({ DATABASE_URL: config.GEM_DATABASE_URL, DATABASE_SSL: config.GEM_DATABASE_SSL }) : null;
 
 const authenticate =
   config.AUTH_MODE === 'dev'
@@ -21,6 +24,7 @@ const authenticate =
 const app = await buildApp({
   config,
   repo: createRepo(sql),
+  cdp: gemSql ? createCdpRepo(gemSql, config.CDP_CLIENT_NAME) : undefined,
   authenticate,
   logger: {
     level: config.LOG_LEVEL,
@@ -35,7 +39,7 @@ if (config.AUTH_MODE === 'dev') {
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutting down');
   await app.close();
-  await sql.end({ timeout: 5 });
+  await Promise.all([sql.end({ timeout: 5 }), gemSql?.end({ timeout: 5 })]);
   process.exit(0);
 };
 process.on('SIGINT', () => void shutdown('SIGINT'));

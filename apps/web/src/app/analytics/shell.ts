@@ -17,6 +17,7 @@ const TABS: { view: View; path: string; label: string }[] = [
   { view: 'engagement', path: 'engagement', label: 'Engagement' },
   { view: 'marketing', path: 'marketing', label: 'Marketing' },
   { view: 'it', path: 'it', label: 'IT & Operations' },
+  { view: 'cdp', path: 'cdp', label: 'Chickasaw CDP' },
 ];
 
 @Component({
@@ -38,6 +39,16 @@ export class Shell {
   protected readonly propertyProblem = signal<ReturnType<typeof toProblem> | null>(null);
 
   protected readonly tabs = computed(() => TABS.filter((t) => this.session.me()?.views.includes(t.view)));
+
+  private readonly currentUrl = toSignal(
+    this.router.events.pipe(
+      filter((e) => e instanceof NavigationEnd),
+      map(() => this.router.url),
+    ),
+    { initialValue: null },
+  );
+  /** The CDP is another client's data with its own window: the property, period and freshness controls don't apply. */
+  protected readonly inCdp = computed(() => (this.currentUrl() ?? this.router.url).startsWith('/cdp'));
   protected readonly property = this.filters.property;
   protected readonly rangeLabel = computed(() => {
     const r = this.filters.range();
@@ -66,17 +77,10 @@ export class Shell {
 
     // Mirror filters to the URL so the current view can be shared. Waits for the
     // first navigation (and its redirect) to finish, then only rewrites query params.
-    const currentUrl = toSignal(
-      this.router.events.pipe(
-        filter((e) => e instanceof NavigationEnd),
-        map(() => this.router.url),
-      ),
-      { initialValue: null },
-    );
     effect(() => {
-      const url = currentUrl();
+      const url = this.currentUrl();
       const params = this.filters.urlParams();
-      if (url === null) return;
+      if (url === null || this.inCdp()) return;
       const tree = this.router.parseUrl(url);
       for (const [key, value] of Object.entries(params)) {
         if (value === null) delete tree.queryParams[key];
