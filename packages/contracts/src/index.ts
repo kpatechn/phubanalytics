@@ -490,9 +490,67 @@ export interface CdpPlayerProfile {
   hasMockData: boolean;
 }
 
+export interface CdpPlayerHost {
+  siteCode: string;
+  repCode: number;
+  /** Staff name from the loyalty system's rep master; null when the rep isn't listed. */
+  name: string | null;
+  permanent: boolean;
+  nextArrival: string | null;
+}
+
+/** Loyalty account figures from the WinStar loyalty system. Tier and points are shared across sites. */
+export interface CdpLoyalty {
+  memberSince: string | null;
+  lastActivity: string | null;
+  lifetimeTrips: number | null;
+  /** Positive = the player lost. */
+  lifetimeCasinoWin: number | null;
+  lifetimeComps: number | null;
+  actionCashEarned: number | null;
+  actionCashUsed: number | null;
+  /** Tier points counting toward status, and when the current status expires. */
+  tierPoints: number | null;
+  tierExpires: string | null;
+  /** Points the current tier needs (0 for the base tier). */
+  keepTierPoints: number | null;
+  nextTier: string | null;
+  nextTierPoints: number | null;
+  pointsToNextTier: number | null;
+  points: { lifetime: number | null; year: number | null; yearLabel: string | null };
+  /** Reward dollars. No balance: the sample can't support one. */
+  rewards: {
+    earnedLifetime: number | null;
+    redeemedLifetime: number | null;
+    adjustedLifetime: number | null;
+    expiredLifetime: number | null;
+    earnedYear: number | null;
+    redeemedYear: number | null;
+  };
+}
+
+export interface CdpPreferences {
+  /** Loyalty system game code (game names aren't loaded yet). */
+  topGame: string | null;
+  topGameShare: number | null;
+  topDenomination: number | null;
+  topDenominationShare: number | null;
+  slotRatings: number;
+  /** ISO weekday, 1 Monday .. 7 Sunday. */
+  favoriteWeekday: number | null;
+  weekdayShare: number | null;
+  favoriteDaypart: 'morning' | 'afternoon' | 'evening' | 'late night' | null;
+  daypartShare: number | null;
+}
+
 export interface CdpPlayer {
   accountNumber: string;
   profile: CdpPlayerProfile;
+  hosts: CdpPlayerHost[];
+  /** Null when the WinStar loyalty sample has no lifetime or points row for the player. */
+  loyalty: CdpLoyalty | null;
+  /** Null when the player has no rated play or trips in the 12 months. */
+  preferences: CdpPreferences | null;
   sites: CdpPlayerSite[];
   /** Latest 30 activities: gaming trips and non-gaming records. */
   recent: CdpActivity[];

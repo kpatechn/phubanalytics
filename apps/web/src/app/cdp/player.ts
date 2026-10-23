@@ -19,6 +19,13 @@ const REASON_LABEL: Record<CdpReachReason, string> = {
   no_consent: 'No consent recorded',
 };
 const IDENTIFIER_LABEL = { email: 'Email', mobile: 'Mobile number', app_user: 'App account' } as const;
+const WEEKDAY = ['Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays', 'Sundays'];
+
+/** 'CLUB PASSPORT' → 'Club Passport'. */
+const tierLabel = (name: string): string => name.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
+
+/** 1¢, 25¢, $1, $100. */
+const fmtDenomination = (d: number): string => (d < 1 ? `${Math.round(d * 100)}¢` : `$${Number.isInteger(d) ? d : d.toFixed(2)}`);
 
 type Lookup =
   | { status: 'idle' }
@@ -44,6 +51,12 @@ type Samples = { status: 'idle' } | { status: 'loading' } | { status: 'ready'; r
     .tags { display: flex; flex-wrap: wrap; gap: 6px; }
     .rfm { display: flex; gap: 18px; font-size: 0.85rem; }
     .rfm strong { font-size: 1.3rem; font-variant-numeric: tabular-nums; margin-right: 4px; }
+    .meter { height: 10px; background: var(--grid); border-radius: 5px; overflow: hidden; margin: 6px 0 4px; }
+    .meter .fill { height: 100%; background: var(--accent); border-radius: 5px; min-width: 2px; }
+    dl.figures { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 10px 0 0; font-size: 0.85rem; }
+    dl.figures dt { color: var(--mute); }
+    dl.figures dd { margin: 0; font-variant-numeric: tabular-nums; }
+    dl.figures dd .extra { margin-left: 6px; }
     .ok { color: var(--good); font-weight: 600; }
     .no { color: var(--mute); }
     .extra { color: var(--mute); }
@@ -90,6 +103,39 @@ export class CdpPlayerPage {
   protected readonly onFile = computed(() => {
     const ids = this.player()?.identifiers ?? [];
     return ids.length ? ids.map((i) => `${IDENTIFIER_LABEL[i.type]}${i.verified ? ' (verified)' : ''}`).join(', ') : 'nothing';
+  });
+
+  /** Tier points against the next tier's threshold, or against keeping the top tier. */
+  protected readonly tierProgress = computed(() => {
+    const pl = this.player();
+    const l = pl?.loyalty;
+    if (!pl || !l || l.tierPoints === null) return null;
+    const tier = tierLabel(pl.profile.tierName);
+    if (l.nextTier && l.nextTierPoints) {
+      const next = tierLabel(l.nextTier);
+      const text =
+        l.pointsToNextTier === 0
+          ? `${fmtInt(l.tierPoints)} tier points: enough for ${next} (${fmtInt(l.nextTierPoints)})`
+          : `${fmtInt(l.tierPoints)} tier points · ${fmtInt(l.pointsToNextTier ?? 0)} more for ${next} (${fmtInt(l.nextTierPoints)})`;
+      return { pct: Math.min(100, (l.tierPoints / l.nextTierPoints) * 100), text };
+    }
+    const keep = l.keepTierPoints ?? 0;
+    return {
+      pct: keep > 0 ? Math.min(100, (l.tierPoints / keep) * 100) : 100,
+      text: `${fmtInt(l.tierPoints)} of ${fmtInt(keep)} tier points needed to keep ${tier}`,
+    };
+  });
+
+  /** "Mostly Fridays (40% of trips)" style lines. */
+  protected readonly preferenceRows = computed(() => {
+    const p = this.player()?.preferences;
+    if (!p) return [];
+    const rows: { label: string; value: string; note: string }[] = [];
+    if (p.topGame) rows.push({ label: 'Game', value: `code ${p.topGame}`, note: `${fmtShare(p.topGameShare)} of slot coin-in` });
+    if (p.topDenomination !== null) rows.push({ label: 'Denomination', value: fmtDenomination(p.topDenomination), note: `${fmtShare(p.topDenominationShare)} of slot coin-in` });
+    if (p.favoriteWeekday) rows.push({ label: 'Day', value: WEEKDAY[p.favoriteWeekday - 1]!, note: `${fmtShare(p.weekdayShare)} of trips` });
+    if (p.favoriteDaypart) rows.push({ label: 'Time of day', value: p.favoriteDaypart[0]!.toUpperCase() + p.favoriteDaypart.slice(1), note: `${fmtShare(p.daypartShare)} of trips` });
+    return rows;
   });
 
   protected readonly nonGamingBars = computed<BarItem[]>(() => {

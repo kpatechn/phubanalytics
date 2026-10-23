@@ -52,4 +52,24 @@ describe.skipIf(!url)('CDP queries on GEM dev', () => {
     expect(await repo.player('999999999999')).toBeNull();
     expect(await repo.examples('no_such_segment')).toBeNull();
   });
+
+  it('a hosted player with loyalty figures and preferences carries them through', async () => {
+    const [row] = await sql`
+      SELECT p.account_number::text AS account, p.host_rep_code, p.tier_points, p.points_to_next_tier, p.next_tier_name,
+             pr.top_game, pr.favorite_weekday, l.lifetime_trips
+      FROM cdp.player_profile p
+      JOIN cdp.player_loyalty l USING (account_number)
+      JOIN cdp.player_preference pr USING (account_number)
+      WHERE p.host_rep_code IS NOT NULL AND pr.top_game IS NOT NULL AND l.tier_points IS NOT NULL
+      ORDER BY p.account_number LIMIT 1`;
+    expect(row).toBeDefined();
+    const player = await repo.player(row!['account']);
+    expect(player?.hosts[0]?.repCode).toBe(row!['host_rep_code']);
+    expect(player?.loyalty?.tierPoints).toBe(row!['tier_points']);
+    expect(player?.loyalty?.pointsToNextTier).toBe(row!['points_to_next_tier']);
+    expect(player?.loyalty?.nextTier).toBe(row!['next_tier_name']);
+    expect(player?.loyalty?.lifetimeTrips).toBe(row!['lifetime_trips']);
+    expect(player?.preferences?.topGame).toBe(row!['top_game']);
+    expect(player?.preferences?.favoriteWeekday).toBe(row!['favorite_weekday']);
+  });
 });

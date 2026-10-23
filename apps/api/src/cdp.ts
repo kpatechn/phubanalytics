@@ -6,8 +6,10 @@ import type {
   CdpFeed,
   CdpMeta,
   CdpPlayer,
+  CdpPlayerHost,
   CdpPlayerReach,
   CdpPlayerSite,
+  CdpPreferences,
   CdpSegment,
   CdpSegmentsData,
   CdpSite,
@@ -180,7 +182,7 @@ export function createCdpRepo(sql: Sql, client: string): CdpRepo {
         FROM cdp.player_profile WHERE account_number = ${accountNumber}::numeric`;
       if (!p) return null;
 
-      const [sites, recent, reach, segments, identifiers] = await Promise.all([
+      const [sites, recent, reach, segments, identifiers, hosts, [loyalty], [preferences]] = await Promise.all([
         sql<CdpPlayerSite[]>`
           SELECT site_code AS "siteCode", visit_days AS "visitDays", trips, gaming_days AS "gamingDays", theo,
                  casino_win AS "casinoWin", comps_issued AS "compsIssued", non_gaming_paid AS "nonGamingPaid",
@@ -218,6 +220,24 @@ export function createCdpRepo(sql: Sql, client: string): CdpRepo {
           SELECT identifier_type AS type, bool_or(is_verified) AS verified
           FROM cdp.identity_link WHERE account_number = ${accountNumber}::numeric
           GROUP BY 1 ORDER BY 1`,
+        sql<CdpPlayerHost[]>`
+          SELECT site_code AS "siteCode", rep_code AS "repCode", host_name AS name, is_permanent AS permanent,
+                 next_arrival_date::text AS "nextArrival"
+          FROM cdp.player_host WHERE account_number = ${accountNumber}::numeric
+          ORDER BY is_permanent DESC, site_code, rep_code`,
+        sql`
+          SELECT member_since::text AS member_since, last_activity_date::text AS last_activity, lifetime_trips,
+                 lifetime_casino_win, lifetime_comps, action_cash_earned, action_cash_used, tier_points,
+                 tier_expires::text AS tier_expires, points_lifetime, points_year, points_year_label,
+                 rewards_earned_lifetime, rewards_redeemed_lifetime, rewards_adjusted_lifetime, rewards_expired_lifetime,
+                 rewards_earned_year, rewards_redeemed_year
+          FROM cdp.player_loyalty WHERE account_number = ${accountNumber}::numeric`,
+        sql<CdpPreferences[]>`
+          SELECT top_game AS "topGame", top_game_share AS "topGameShare", top_denomination AS "topDenomination",
+                 top_denomination_share AS "topDenominationShare", slot_ratings AS "slotRatings",
+                 favorite_weekday AS "favoriteWeekday", weekday_share AS "weekdayShare",
+                 favorite_daypart AS "favoriteDaypart", daypart_share AS "daypartShare"
+          FROM cdp.player_preference WHERE account_number = ${accountNumber}::numeric`,
       ]);
 
       const num = (v: unknown): number => Number(v ?? 0);
@@ -272,6 +292,34 @@ export function createCdpRepo(sql: Sql, client: string): CdpRepo {
           reachableChannels: p['reachable_channels'],
           hasMockData: p['has_mock_data'],
         },
+        hosts: [...hosts],
+        loyalty: loyalty
+          ? {
+              memberSince: loyalty['member_since'],
+              lastActivity: loyalty['last_activity'],
+              lifetimeTrips: nullable(loyalty['lifetime_trips']),
+              lifetimeCasinoWin: nullable(loyalty['lifetime_casino_win']),
+              lifetimeComps: nullable(loyalty['lifetime_comps']),
+              actionCashEarned: nullable(loyalty['action_cash_earned']),
+              actionCashUsed: nullable(loyalty['action_cash_used']),
+              tierPoints: nullable(loyalty['tier_points']),
+              tierExpires: loyalty['tier_expires'],
+              keepTierPoints: nullable(p['keep_tier_points']),
+              nextTier: p['next_tier_name'],
+              nextTierPoints: nullable(p['next_tier_points']),
+              pointsToNextTier: nullable(p['points_to_next_tier']),
+              points: { lifetime: nullable(loyalty['points_lifetime']), year: nullable(loyalty['points_year']), yearLabel: loyalty['points_year_label'] },
+              rewards: {
+                earnedLifetime: nullable(loyalty['rewards_earned_lifetime']),
+                redeemedLifetime: nullable(loyalty['rewards_redeemed_lifetime']),
+                adjustedLifetime: nullable(loyalty['rewards_adjusted_lifetime']),
+                expiredLifetime: nullable(loyalty['rewards_expired_lifetime']),
+                earnedYear: nullable(loyalty['rewards_earned_year']),
+                redeemedYear: nullable(loyalty['rewards_redeemed_year']),
+              },
+            }
+          : null,
+        preferences: preferences ?? null,
         sites: [...sites],
         recent: recent.map(({ sortDate: _sortDate, ...a }) => a),
         reach: reach.map((r) => ({ ...r, consentAt: iso(r.consentAt) })),

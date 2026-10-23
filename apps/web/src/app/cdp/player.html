@@ -65,6 +65,14 @@
         Home site <strong>{{ siteName(p.homeSite) }}</strong> · {{ p.residentialState ?? 'state unknown' }} · member since {{ date(p.signupDate) }}
         · last activity {{ date(p.lastActivity) }}@if (p.recencyDays !== null) { ({{ fmt(p.recencyDays) }} days before the as-of date)}
       </p>
+      @for (h of pl.hosts; track h.siteCode + h.repCode) {
+        <p class="facts">
+          Host <strong>{{ h.name ?? 'rep ' + h.repCode }}</strong> at {{ siteName(h.siteCode) }}{{ h.permanent ? ' (permanent)' : '' }}
+          @if (h.nextArrival) {
+            · next arrival {{ date(h.nextArrival) }}
+          }
+        </p>
+      }
       @if (p.rfm; as r) {
         <div class="rfm" aria-label="RFM scores, 1 to 5">
           <span><strong>{{ r.recency }}</strong>Recency</span>
@@ -95,6 +103,62 @@
     </section>
 
     <div class="grid-2">
+      <section class="card" aria-labelledby="cdp-loyalty">
+        <div class="card-head">
+          <div><h2 id="cdp-loyalty">Loyalty account</h2><div class="card-sub">From the WinStar loyalty system. Tier and points are shared across sites.</div></div>
+          <span class="tag good">real</span>
+        </div>
+        @if (pl.loyalty; as l) {
+          @if (tierProgress(); as t) {
+            <div class="meter" role="img" [attr.aria-label]="t.text"><div class="fill" [style.width.%]="t.pct"></div></div>
+            <p class="facts">{{ t.text }}@if (l.tierExpires) { · current status runs to {{ date(l.tierExpires) }}}</p>
+          }
+          <dl class="figures">
+            <dt>Points earned</dt>
+            <dd>{{ l.points.lifetime === null ? '–' : fmt(l.points.lifetime) + ' lifetime' }}@if (l.points.year !== null) { · {{ fmt(l.points.year) }} in {{ l.points.yearLabel }}}</dd>
+            <dt>Rewards earned</dt>
+            <dd>{{ l.rewards.earnedLifetime === null ? '–' : money(l.rewards.earnedLifetime) + ' lifetime' }}@if (l.rewards.earnedYear !== null) { · {{ money(l.rewards.earnedYear) }} in {{ l.points.yearLabel ?? 'the latest year' }}}</dd>
+            <dt>Rewards redeemed</dt>
+            <dd>{{ l.rewards.redeemedLifetime === null ? '–' : money(l.rewards.redeemedLifetime) + ' lifetime' }}@if (l.rewards.redeemedYear !== null) { · {{ money(l.rewards.redeemedYear) }} in {{ l.points.yearLabel ?? 'the latest year' }}}</dd>
+            @if (l.rewards.expiredLifetime) {
+              <dt>Rewards expired</dt>
+              <dd>{{ money(l.rewards.expiredLifetime) }} lifetime</dd>
+            }
+            <dt>Lifetime trips</dt>
+            <dd>{{ l.lifetimeTrips === null ? '–' : fmt(l.lifetimeTrips) }}</dd>
+            <dt>Lifetime casino win</dt>
+            <dd>{{ l.lifetimeCasinoWin === null ? '–' : money(l.lifetimeCasinoWin) }}</dd>
+            <dt>Lifetime comps</dt>
+            <dd>{{ l.lifetimeComps === null ? '–' : money(l.lifetimeComps) }}</dd>
+            <dt>Action cash</dt>
+            <dd>{{ l.actionCashEarned === null ? '–' : money(l.actionCashEarned) + ' earned' }}@if (l.actionCashUsed !== null) { · {{ money(l.actionCashUsed) }} used}</dd>
+            <dt>Member since</dt>
+            <dd>{{ date(l.memberSince) }}</dd>
+          </dl>
+          <p class="note">No reward balance is shown: in the sample, redemptions often exceed recorded earnings, so a balance can't be derived yet.</p>
+        } @else {
+          <p class="note">This player has no row in the WinStar loyalty sample yet (lifetime file and point buckets cover about 7,000 accounts).</p>
+        }
+      </section>
+
+      <section class="card" aria-labelledby="cdp-prefs">
+        <div class="card-head"><div><h2 id="cdp-prefs">What and when they play</h2><div class="card-sub">Last 12 months, every site</div></div></div>
+        @if (preferenceRows().length > 0) {
+          <dl class="figures">
+            @for (r of preferenceRows(); track r.label) {
+              <dt>{{ r.label }}</dt>
+              <dd><strong>{{ r.value }}</strong> <span class="extra">{{ r.note }}</span></dd>
+            }
+          </dl>
+          <p class="note">
+            From the gaming trips{{ pl.preferences?.slotRatings ? ' and ' + fmt(pl.preferences!.slotRatings) + ' slot ratings' : '' }}.
+            Game names aren't loaded in GEM yet, so games show as loyalty-system codes.
+          </p>
+        } @else {
+          <p class="note">No rated play or trips in the 12 months.</p>
+        }
+      </section>
+
       <section class="card" aria-labelledby="cdp-reach1">
         <div class="card-head"><div><h2 id="cdp-reach1">Can we reach them?</h2><div class="card-sub">Current consent and contact, per channel</div></div></div>
         <div class="table-wrap">

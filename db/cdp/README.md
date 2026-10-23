@@ -40,6 +40,26 @@ scripts/build-cdp.sh
 | `rtptpas` | Rating points | |
 | `cmfdpas`, `cmbvpas`, `cmrmpas`, `cmotpas` + `cmtrpas`, `cmptpas`, `crn#pas` | Comps: food, beverage, room, other, total; room nights comped. Only `A` rows carry comps | |
 
+## Decoding WinStar's loyalty account
+
+The readable `dexiga.customer_lifetime_summary` has broken dates (2041–2045) and overflowed comp values, so the CDP reads the raw lifetime file `dexiga_main.loyalty_acsc_cfpah_ws` (DB2 `CFPAH`). Dates there are days since 1899-12-30.
+
+| Column | Meaning | Used as |
+|---|---|---|
+| `acctah`, `cpidah`, `pridah` | Account, corporate and property ID | `account_number`, site |
+| `ltdtah` | Lifetime trips | `lifetime_trips` |
+| `ttwlah` | Lifetime win/loss, player side | `lifetime_casino_win = -ttwlah` |
+| `ltdcah` | Lifetime comps; values below 0 are sentinels (down to -9,999,999,945,770) and are dropped | `lifetime_comps` |
+| `acelah`, `acwlah` | Action cash earned and used, lifetime | `action_cash_earned`, `action_cash_used` |
+| `lvptah`, `lvdtah` | Tier points toward status; when the current status expires | `tier_points`, `tier_expires` |
+| `dtaah`, `dtlaah` | Date added; last activity | `member_since`, `last_activity_date` |
+
+Points and rewards come from `dexiga.customer_bucket_level_summary`, using the all-play rows (`play_type` blank):
+- **Buckets:** `PTTRACK` (points), `TIERS` (tier points) and `REWARDS` (dollars).
+- **Levels:** `L` lifetime, `Y` year, `M` month, `D` day. The CDP uses lifetime and the latest year.
+
+Tier thresholds come from `dexiga_main.loyalty_acsc_cfpclva_ws`: Club Passport 0, Premier 5,000, Elite 15,000 tier points.
+
 ## Tables
 
 | Table | Grain | Rows | What it is |
@@ -51,13 +71,17 @@ scripts/build-cdp.sh
 | `non_gaming_activity` | stay, check, spa service, golf round | 319,317 | Hotel, dining, retail, spa, golf, with identity method |
 | `identity_link` | identifier, account | 126,124 | Emails, mobiles, app accounts pointing to a Club Passport number |
 | `player_site_summary` | player, site | 67,547 | Last 12 months at each site |
+| `tier_rule` | tier | 3 | Tier point thresholds |
+| `player_host` | player, site, host | 1,891 | Host assignments, staff name, permanent flag, next planned arrival |
+| `player_loyalty` | Club Passport account | 6,980 | Lifetime file and point buckets (WinStar sample) |
+| `player_preference` | Club Passport account | 52,161 | Top game, denomination, weekday and time of day over 12 months |
 | `player_profile` | Club Passport account | 76,819 | One row per player in the patron master |
 | `reachability` | player, channel | 307,276 | Email, SMS, push and mail: reachable or why not |
-| `segment`, `segment_member` | segment; segment, player | 12; 102,117 | Rule-based segments |
+| `segment`, `segment_member` | segment; segment, player | 14; 102,505 | Rule-based segments |
 | `refresh_run` | refresh | | Start, finish, as-of date, row counts |
 | views `v_player_360`, `v_segment_summary` | player; segment | | Profile with segment list; segment size and reach per channel |
 
-Row counts are from the first build (as of 2025-07-04).
+Row counts are from the build of 2026-10-23 (as of 2025-07-04).
 
 ## Definitions
 
@@ -73,6 +97,12 @@ Row counts are from the first build (as of 2025-07-04).
 - **Identity:** a record carries the Club Passport number (`card`). Failing that, the guest's email must belong to exactly one player (`email`); otherwise the guest stays unknown. Shared emails or mobiles are never used to match.
 - **Reachability:** a channel is reachable when there is a contact (email, mobile, linked app account, or mailing address), the current consent is an opt-in, and the player isn't self-excluded. The reason is the first that applies: `self_excluded`, `no_contact`, `opted_out`, `no_consent`.
 - **Self-exclusion:** any entry in `dexiga.exclusion_history` excludes a player from reachability and from every segment. There is no expiry logic yet.
+- **Tier progress:** `points_to_next_tier` is the next tier's threshold minus `tier_points` (0 once reached), and `keep_tier_points` is the current tier's threshold. The top tier has no next tier.
+- **Host:** the profile shows one host per player: permanent first, then by site and rep code. Player 360 lists them all.
+- **Preferences:**
+  - Game and denomination: the one with the most slot coin-in, from WinStar's real ratings and the mocked sites' ratings.
+  - Weekday and time of day: the most trips. The time-of-day bands are morning 6–12, afternoon 12–17, evening 17–22, and late night otherwise.
+  - Ties go to the larger coin-in or theo, then the lower code.
 
 ## Segments
 
@@ -80,10 +110,12 @@ Row counts are from the first build (as of 2025-07-04).
 |---|---|
 | `champions` | R, F and M all 4+ |
 | `high_value_at_risk` | M 4+, R 2 or less |
+| `hosted_going_quiet` | Has a host, R 2 or less |
 | `new_players` | Signed up in the last 90 days |
 | `one_visit` | One visit day, more than 60 days ago |
 | `lapsed` | Member for a year or more, no activity in 12 months |
 | `multi_site` | Two or more sites in 12 months |
+| `near_next_tier` | Within 20% of the next tier's tier points |
 | `ok_winstar_only` | Oklahoma resident whose only site is WinStar |
 | `hotel_guests` | At least one completed stay |
 | `non_gaming_led` | Non-gaming 40%+ of value and at least $200 paid |
@@ -101,6 +133,7 @@ Add or change one by editing `cdp.segment` (the rule is a SQL condition on `cdp.
 - Email matches only fill records that had no card number.
 - RFM scores are 1–5 and only for active players. The home site is one of the sites the player visited.
 - Self-excluded players are never reachable, and reachable always means a contact on file plus an opt-in.
+- Tier thresholds have no gaps, tier progress matches the thresholds, every lifetime or bucket account has a loyalty row, profile hosts match the host table, and preference shares are 0–1.
 - Every segment's members meet its rule, with nobody missing and nobody self-excluded.
 
 ## Known limits
@@ -109,4 +142,8 @@ Add or change one by editing `cdp.segment` (the rule is a SQL condition on `cdp.
 - **Sampling gap:** 12,059 accounts have real WinStar play but no row in the patron master sample, so they appear in activity but not in profiles.
 - **Mixed rows:** WinStar `A` rows mix slots and tables, so slot theo share understates slots for those players.
 - **Mailing address** means a non-blank zip in the patron master, which is masked in dev.
+- **Loyalty coverage:**
+  - The WinStar sample has lifetime and point rows for about 7,000 accounts (4,792 profiles) and hosts for 1,110 profiles; everyone else shows "no row in the sample".
+  - No reward balance is kept, because redemptions exceed recorded earnings for many players.
+  - Game names aren't loaded in GEM (the games master is empty), so games are loyalty-system codes.
 - **Placeholders:** everything marked mock in `cdp.feed` is a stand-in; see the mock README for the values to correct.
