@@ -8,6 +8,8 @@ It reads two kinds of feed:
 
 Every activity row records its feed and an `is_mock` flag, and `cdp.feed` lists which feeds are real and which are mock.
 
+The dashboard's **Chickasaw CDP** tab (Segments, Sites, Player 360) reads these tables through the API (`apps/api/src/cdp.ts`, role `analytics:cdp`). It shows a mock-data banner built from `cdp.feed`.
+
 ## Run
 
 ```bash

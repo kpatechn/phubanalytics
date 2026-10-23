@@ -14,9 +14,10 @@ export const VIEW_ROLE: Record<View, Role> = {
   engagement: 'analytics:exec',
   marketing: 'analytics:marketing',
   it: 'analytics:it',
+  cdp: 'analytics:cdp',
 };
 
-const ALL_ROLES: ReadonlySet<string> = new Set<Role>(['analytics:exec', 'analytics:marketing', 'analytics:it', 'analytics:admin']);
+const ALL_ROLES: ReadonlySet<string> = new Set<Role>(['analytics:exec', 'analytics:marketing', 'analytics:it', 'analytics:cdp', 'analytics:admin']);
 
 function isRole(value: unknown): value is Role {
   return typeof value === 'string' && ALL_ROLES.has(value);

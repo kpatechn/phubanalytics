@@ -1,13 +1,15 @@
 <header class="top">
   <div class="brand">
     <h1>PlayerHub App Analytics</h1>
-    @if (property(); as p) {
-      <span class="prop">{{ p.name }}</span>
+    @if (!inCdp()) {
+      @if (property(); as p) {
+        <span class="prop">{{ p.name }}</span>
+      }
     }
   </div>
 
   <form class="filters" (submit)="$event.preventDefault()" aria-label="Filters">
-    @if (filters.properties().length > 1) {
+    @if (!inCdp() && filters.properties().length > 1) {
       <label class="field">
         Property
         <select (change)="setProperty($any($event.target).value)">
@@ -17,16 +19,18 @@
         </select>
       </label>
     }
-    <label class="field">
-      Period
-      <select (change)="setPreset($any($event.target).value)">
-        @for (p of presets; track p.value) {
-          <option [value]="p.value" [selected]="p.value === filters.preset()">{{ p.label }}</option>
-        }
-        <option value="custom" [selected]="filters.preset() === 'custom'">Custom range</option>
-      </select>
-    </label>
-    @if (filters.preset() === 'custom') {
+    @if (!inCdp()) {
+      <label class="field">
+        Period
+        <select (change)="setPreset($any($event.target).value)">
+          @for (p of presets; track p.value) {
+            <option [value]="p.value" [selected]="p.value === filters.preset()">{{ p.label }}</option>
+          }
+          <option value="custom" [selected]="filters.preset() === 'custom'">Custom range</option>
+        </select>
+      </label>
+    }
+    @if (!inCdp() && filters.preset() === 'custom') {
       <label class="field">
         From
         <input type="date" [value]="filters.range()?.from" [max]="filters.range()?.to" (change)="setFrom($any($event.target).value)" />
@@ -47,7 +51,7 @@
   </form>
 </header>
 
-@if (property(); as p) {
+@if (!inCdp() && property(); as p) {
   @if (p.environment !== 'prod') {
     <div class="env" role="note">
       <span class="tag warn" aria-hidden="true">{{ p.environment | uppercase }}</span>
@@ -63,16 +67,18 @@
   @for (t of tabs(); track t.view) {
     <a [routerLink]="['/', t.path]" routerLinkActive="active" ariaCurrentWhenActive="page" queryParamsHandling="preserve">{{ t.label }}</a>
   }
-  <span class="range">
-    {{ rangeLabel() }}
-    @if (freshness(); as f) {
-      <span class="note">· data as of {{ f.dataAsOf }} · refreshed {{ f.refreshed }}@if (f.platform) { · platform data {{ f.platform }}}</span>
-    }
-  </span>
+  @if (!inCdp()) {
+    <span class="range">
+      {{ rangeLabel() }}
+      @if (freshness(); as f) {
+        <span class="note">· data as of {{ f.dataAsOf }} · refreshed {{ f.refreshed }}@if (f.platform) { · platform data {{ f.platform }}}</span>
+      }
+    </span>
+  }
 </nav>
 
 <main>
-  @if (propertyProblem(); as problem) {
+  @if (!inCdp() && propertyProblem(); as problem) {
     <div class="page"><app-error-panel [problem]="problem" (retry)="filters.reload()" /></div>
   } @else if (session.problem(); as problem) {
     <div class="page"><app-error-panel [problem]="problem" (retry)="filters.reload()" /></div>
