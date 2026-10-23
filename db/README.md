@@ -10,10 +10,12 @@ Raw app events land in `data."dexAnalytics"` (written by the ingest service). Ev
 | `migrations/002_engagement.sql` | Foreground flag on the event catalog and active-account columns on `guestDaily` (DAU/WAU/MAU) |
 | `migrations/003_dextrans.sql` | `postgres_fdw` link to database `dextrans` and rollups for sessions, devices, message delivery, campaigns, tiers and scheduled jobs |
 | `ops/dextrans_reader.sql`, `ops/link_dextrans.sql`, `../scripts/link-dextrans.sh` | Read-only `dextrans` role and the link's connection and login, per environment |
-| `tests/dextrans_checks.sql`, `../scripts/test-dextrans-local.sh` | Platform rollups vs direct counts; local end-to-end test of the link |
+| `tests/dextrans_checks.sql`, `../scripts/test-dextrans-local.sh` | Platform rollups vs direct counts (days before today); local end-to-end test of the link |
+| `rollback/` | Tested rollbacks for 003 and 002 and the reader role (`../scripts/test-rollback-local.sh`) |
 | `seeds/001_event_catalog.sql` | Event display names, categories, feature map, dimension rules (all environments) |
 | `seeds/graton_dev_property.sql` | Graton dev property row. Inserting it queues its whole history |
-| `tests/rollup_checks.sql` | Golden values from the plan plus raw-vs-rollup invariants. Read-only |
+| `tests/rollup_checks.sql` | Graton-dev golden values from the plan, then `rollup_invariants.sql`. Dev only |
+| `tests/rollup_invariants.sql` | Raw-vs-rollup invariants for any environment (skips days still queued). Read-only |
 | `../scripts/test-rollups-local.sh` | Runs all of it on a throwaway local database against a scrubbed copy of dev events |
 
 ## How it works
@@ -79,6 +81,8 @@ scripts/link-dextrans.sh graton-dev
 ```
 
 ## Deploy to an environment
+
+Production: follow [docs/production-rollout.md](../docs/production-rollout.md). The commands below are the short version used on dev.
 
 Deployed to Graton dev on 2026-10-22: migrations 001–003, the dextrans link, all checks pass. Scheduled the same day with pg_cron:
 - **Parameter group:** `playerhub-phub-graton-dev-uw2-pg-pg`, used only by this instance. `shared_preload_libraries = pg_stat_statements,pg_tle,pg_cron` and `cron.database_name = dexl`.

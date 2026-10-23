@@ -1,7 +1,6 @@
--- Rollup checks: plan section 4 golden values (Graton dev, 2026-09-03 to 2026-10-02
--- Pacific) read from the rollups, plus invariants that every rollup agrees with raw
--- events on every day. Read-only, so it can also run against dev after deployment.
--- Every row should say PASS.
+-- Golden values from the plan (section 4): Graton dev, 2026-09-03 to 2026-10-02
+-- Pacific, read from the rollups. Dev only: other environments run
+-- rollup_invariants.sql on its own. Read-only. Every row should say PASS.
 
 WITH
 w AS (SELECT 15001 AS t, 1500001 AS p, date '2026-09-03' AS d0, date '2026-10-02' AS d1, 'America/Los_Angeles' AS tz),
@@ -19,51 +18,6 @@ ge AS (
      WHERE x."tenantId" = w.t AND x."propertyId" = w.p AND x."bucketDate" BETWEEN w.d0 AND w.d1),
 n AS (
     SELECT "eventId", sum("eventCount") AS c FROM ed GROUP BY 1),
-
--- Raw events per property-local day (excluded accounts left out), for invariants.
-raw_day AS (
-    SELECT e."tenantId", e."propertyId", (e."createdDate" AT TIME ZONE p."timeZone")::date AS day, count(*) AS c
-      FROM data."dexAnalytics" e
-      JOIN analytics.property p ON p."tenantId" = e."tenantId" AND p."propertyId" = e."propertyId"
-     WHERE NOT EXISTS (SELECT 1 FROM analytics."excludedUser" x
-                        WHERE x."tenantId" = e."tenantId" AND x."propertyId" = e."propertyId" AND x."userId" = e."userId")
-     GROUP BY 1, 2, 3),
-daily AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day, sum("eventCount") AS c FROM analytics."eventDaily" GROUP BY 1, 2, 3),
-hourly AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day, sum("eventCount") AS c FROM analytics."eventHourly" GROUP BY 1, 2, 3),
-guest AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day, sum("eventCount") AS c FROM analytics."guestEventDaily" GROUP BY 1, 2, 3),
-guest_day AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day, sum("eventCount") AS c FROM analytics."guestDaily" GROUP BY 1, 2, 3),
-errors_day AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day, sum("eventCount") AS c FROM analytics."apiErrorDaily" GROUP BY 1, 2, 3),
-api_error_day AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day, sum("eventCount") AS c FROM analytics."eventDaily"
-     WHERE "eventId" = 'api_error' GROUP BY 1, 2, 3),
-rule_event_day AS (
-    SELECT d."tenantId", d."propertyId", d."bucketDate" AS day, r."eventId", r."dimensionType", sum(d."eventCount") AS c
-      FROM analytics."eventDaily" d JOIN analytics."dimensionRule" r ON r."eventId" = d."eventId" AND r."isActive"
-     GROUP BY 1, 2, 3, 4, 5),
--- Accounts with a foreground event, per local day, straight from raw events.
-raw_active AS (
-    SELECT e."tenantId", e."propertyId", (e."createdDate" AT TIME ZONE p."timeZone")::date AS day,
-           count(DISTINCT e."userId") AS accounts, count(*) AS c
-      FROM data."dexAnalytics" e
-      JOIN analytics.property p ON p."tenantId" = e."tenantId" AND p."propertyId" = e."propertyId"
-      JOIN analytics."eventCatalog" c ON c."eventId" = e."eventId" AND c."isForeground"
-     WHERE nullif(btrim(e."userId"), '') IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM analytics."excludedUser" x
-                        WHERE x."tenantId" = e."tenantId" AND x."propertyId" = e."propertyId" AND x."userId" = e."userId")
-     GROUP BY 1, 2, 3),
-rollup_active AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day,
-           count(*) FILTER (WHERE "foregroundEventCount" > 0) AS accounts, sum("foregroundEventCount") AS c
-      FROM analytics."guestDaily" GROUP BY 1, 2, 3
-    HAVING sum("foregroundEventCount") > 0),
-rule_dim_day AS (
-    SELECT "tenantId", "propertyId", "bucketDate" AS day, "eventId", "dimensionType", sum("eventCount") AS c
-      FROM analytics."eventDimensionDaily" GROUP BY 1, 2, 3, 4, 5),
 
 checks(ord, name, expected, actual) AS (
     SELECT 1,  'Total events',                          '3494',              (SELECT coalesce(sum(c), 0) FROM n)::text
@@ -99,24 +53,8 @@ checks(ord, name, expected, actual) AS (
     UNION ALL SELECT 17, 'Card-link starts offsite / total', '26 / 35',
         (SELECT coalesce(sum("eventCount") FILTER (WHERE "locationContext" = 'offsite'), 0) || ' / ' || coalesce(sum("eventCount"), 0)
            FROM ed WHERE "eventId" = 'link_account_clicked')
-    -- Invariants over every day of every property
-    UNION ALL SELECT 50, 'Days where eventDaily <> raw (local day)', '0',
-        (SELECT count(*) FROM raw_day r FULL JOIN daily d USING ("tenantId", "propertyId", day) WHERE r.c IS DISTINCT FROM d.c)::text
-    UNION ALL SELECT 51, 'Days where eventHourly <> eventDaily', '0',
-        (SELECT count(*) FROM daily d FULL JOIN hourly h USING ("tenantId", "propertyId", day) WHERE d.c IS DISTINCT FROM h.c)::text
-    UNION ALL SELECT 52, 'Days where guestEventDaily <> eventDaily', '0',
-        (SELECT count(*) FROM daily d FULL JOIN guest g USING ("tenantId", "propertyId", day) WHERE d.c IS DISTINCT FROM g.c)::text
-    UNION ALL SELECT 53, 'Days where guestDaily <> eventDaily', '0',
-        (SELECT count(*) FROM daily d FULL JOIN guest_day g USING ("tenantId", "propertyId", day) WHERE d.c IS DISTINCT FROM g.c)::text
-    UNION ALL SELECT 54, 'Days where apiErrorDaily <> api_error events', '0',
-        (SELECT count(*) FROM api_error_day a FULL JOIN errors_day e USING ("tenantId", "propertyId", day) WHERE a.c IS DISTINCT FROM e.c)::text
-    UNION ALL SELECT 55, 'Rule-days where dimension total <> event count', '0',
-        (SELECT count(*) FROM rule_event_day a FULL JOIN rule_dim_day b USING ("tenantId", "propertyId", day, "eventId", "dimensionType") WHERE a.c IS DISTINCT FROM b.c)::text
-    UNION ALL SELECT 56, 'Days where active accounts (foreground) <> raw', '0',
-        (SELECT count(*) FROM raw_active r FULL JOIN rollup_active g USING ("tenantId", "propertyId", day)
-          WHERE r.accounts IS DISTINCT FROM g.accounts OR r.c IS DISTINCT FROM g.c)::text
-    UNION ALL SELECT 57, 'Queued hours left after refresh', '0',
-        (SELECT count(*) FROM analytics."refreshQueue")::text
 )
 SELECT name AS "check", expected, actual, CASE WHEN expected = actual THEN 'PASS' ELSE 'FAIL' END AS result
   FROM checks ORDER BY ord;
+
+\ir rollup_invariants.sql

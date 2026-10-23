@@ -1,7 +1,7 @@
 # Schema validation: analytics plan vs Graton Dev database
 
 Checked 2026-10-22 against `playerhub-phub-graton-dev-uw2-pg` (PostgreSQL 16.13), read-only, as `phub_dev_admin`.
-Companion to `playerhub-analytics-implementation-plan.md`. No player IDs, session IDs or other identifiers are reproduced here.
+Companion to [implementation-plan.md](implementation-plan.md). No player IDs, session IDs or other identifiers are reproduced here.
 
 ## 1. Headline
 

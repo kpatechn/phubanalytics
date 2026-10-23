@@ -2,6 +2,8 @@
 
 Executive, Engagement, Marketing and IT & Operations dashboards for the PlayerHub mobile app, built on the `dexl.analytics` rollups.
 
+New here? Start with the [documentation index](docs/README.md).
+
 | Path | What it is |
 |---|---|
 | `apps/api` | Fastify 5 + postgres.js summary API (Node 24, TypeScript, zod) |
@@ -9,6 +11,7 @@ Executive, Engagement, Marketing and IT & Operations dashboards for the PlayerHu
 | `packages/contracts` | Response types shared by both |
 | `db/` | Rollup migration, seeds, checks and pg_cron schedule ([db/README.md](db/README.md)) |
 | `docs/schema-validation.md` | How the plan was checked against the Graton dev database |
+| `docs/production-rollout.md` | Step-by-step production rollout, rollback and runbook |
 
 ## Run locally
 
