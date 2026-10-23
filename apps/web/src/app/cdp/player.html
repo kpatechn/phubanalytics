@@ -1,0 +1,271 @@
+<div class="page">
+  <section class="card" aria-labelledby="cdp-find">
+    <div class="card-head">
+      <div>
+        <h2 id="cdp-find">Find a player</h2>
+        <div class="card-sub">The number stays on this page: it isn't put in the address bar, saved or cached.</div>
+      </div>
+    </div>
+    <form class="search" (submit)="$event.preventDefault(); find(acct.value)">
+      <label class="field">
+        Club Passport number
+        <input #acct type="text" inputmode="numeric" autocomplete="off" spellcheck="false" maxlength="12" [value]="query()" />
+      </label>
+      <button type="submit" class="btn">Look up</button>
+      @if (segments().length > 0) {
+        <label class="field">
+          Or take a top player from
+          <select (change)="sample($any($event.target).value)">
+            <option value="">Choose a segment</option>
+            @for (s of segments(); track s.code) {
+              <option [value]="s.code">{{ s.name }}</option>
+            }
+          </select>
+        </label>
+      }
+    </form>
+    @if (sampleRows(); as rows) {
+      <ul class="samples" aria-label="Top players in the segment">
+        @for (x of rows; track x.accountNumber) {
+          <li><button type="button" class="btn mono" (click)="find(x.accountNumber)">{{ x.accountNumber }} · {{ x.tierName }}</button></li>
+        }
+      </ul>
+    } @else if (samples().status === 'loading') {
+      <p class="note" role="status">Loading players…</p>
+    } @else if (samples().status === 'error') {
+      <p class="note">Couldn't load players for that segment.</p>
+    }
+  </section>
+
+  @if (lookup().status === 'loading') {
+    <p class="note" role="status">Looking up the player…</p>
+  } @else if (problem(); as p) {
+    @if (p.status === 400 || p.status === 404) {
+      <p class="card" role="alert"><strong>{{ p.title }}.</strong> {{ p.detail }}</p>
+    } @else {
+      <app-error-panel [problem]="p" (retry)="find(query())" />
+    }
+  } @else if (player(); as pl) {
+    @let p = pl.profile;
+    <section class="card" aria-labelledby="cdp-who">
+      <div class="who">
+        <h2 id="cdp-who">Player <span class="mono">{{ pl.accountNumber }}</span></h2>
+        <span class="tag good">{{ p.tierName }}</span>
+        @if (p.tierSource === 'mock') {
+          <span class="tag warn">mock tier</span>
+        }
+        @if (p.isExcluded) {
+          <span class="tag bad"><span aria-hidden="true">⛔</span> Self-excluded: never market</span>
+        }
+        @if (p.hasMockData) {
+          <span class="tag warn">includes mock activity</span>
+        }
+      </div>
+      <p class="facts">
+        Home site <strong>{{ siteName(p.homeSite) }}</strong> · {{ p.residentialState ?? 'state unknown' }} · member since {{ date(p.signupDate) }}
+        · last activity {{ date(p.lastActivity) }}@if (p.recencyDays !== null) { ({{ fmt(p.recencyDays) }} days before the as-of date)}
+      </p>
+      @for (h of pl.hosts; track h.siteCode + h.repCode) {
+        <p class="facts">
+          Host <strong>{{ h.name ?? 'rep ' + h.repCode }}</strong> at {{ siteName(h.siteCode) }}{{ h.permanent ? ' (permanent)' : '' }}
+          @if (h.nextArrival) {
+            · next arrival {{ date(h.nextArrival) }}
+          }
+        </p>
+      }
+      @if (p.rfm; as r) {
+        <div class="rfm" aria-label="RFM scores, 1 to 5">
+          <span><strong>{{ r.recency }}</strong>Recency</span>
+          <span><strong>{{ r.frequency }}</strong>Frequency</span>
+          <span><strong>{{ r.monetary }}</strong>Value</span>
+          <span class="extra">scores 1–5 among players active in the 12 months</span>
+        </div>
+      } @else {
+        <p class="note">No activity in the 12 months, so no RFM scores.</p>
+      }
+      @if (pl.segments.length > 0) {
+        <div class="tags" aria-label="Segments">
+          @for (s of pl.segments; track s.code) {
+            <span class="tag">{{ s.name }}</span>
+          }
+        </div>
+      }
+    </section>
+
+    <section class="kpi-grid" aria-label="Player numbers">
+      <app-kpi-tile metric="cdpTheo" [value]="money(p.theo)" [sub]="fmt(p.trips) + ' trips · ' + fmt(p.gamingDays) + ' gaming days'" />
+      <app-kpi-tile metric="cdpAdt" [value]="p.adt === null ? '–' : money(p.adt)" [sub]="p.slotTheoShare === null ? null : share(p.slotTheoShare) + ' of theo on slots'" />
+      <app-kpi-tile metric="cdpVisitDays" [value]="fmt(p.visitDays)" [sub]="count(p.siteCodes.length, 'site')" />
+      <app-kpi-tile metric="cdpNonGaming" [value]="money(p.nonGamingPaid)" [sub]="share(p.nonGamingShare) + ' of combined value'" />
+      <app-kpi-tile metric="cdpCombined" [value]="money(p.combinedValue)" />
+      <app-kpi-tile metric="cdpComps" [value]="money(p.compsIssued)" [sub]="p.reinvestmentRate === null ? null : share(p.reinvestmentRate) + ' of theo'" />
+      <app-kpi-tile metric="cdpAppDays" [value]="p.app.linked ? fmt(p.app.activeDays90) : '–'" [sub]="p.app.linked ? 'linked ' + when(p.app.linkedAt) : 'no linked app account'" />
+    </section>
+
+    <div class="grid-2">
+      <section class="card" aria-labelledby="cdp-loyalty">
+        <div class="card-head">
+          <div><h2 id="cdp-loyalty">Loyalty account</h2><div class="card-sub">From the WinStar loyalty system. Tier and points are shared across sites.</div></div>
+          <span class="tag good">real</span>
+        </div>
+        @if (pl.loyalty; as l) {
+          @if (tierProgress(); as t) {
+            <div class="meter" role="img" [attr.aria-label]="t.text"><div class="fill" [style.width.%]="t.pct"></div></div>
+            <p class="facts">{{ t.text }}@if (l.tierExpires) { · current status runs to {{ date(l.tierExpires) }}}</p>
+          }
+          <dl class="figures">
+            <dt>Points earned</dt>
+            <dd>{{ l.points.lifetime === null ? '–' : fmt(l.points.lifetime) + ' lifetime' }}@if (l.points.year !== null) { · {{ fmt(l.points.year) }} in {{ l.points.yearLabel }}}</dd>
+            <dt>Rewards earned</dt>
+            <dd>{{ l.rewards.earnedLifetime === null ? '–' : money(l.rewards.earnedLifetime) + ' lifetime' }}@if (l.rewards.earnedYear !== null) { · {{ money(l.rewards.earnedYear) }} in {{ l.points.yearLabel ?? 'the latest year' }}}</dd>
+            <dt>Rewards redeemed</dt>
+            <dd>{{ l.rewards.redeemedLifetime === null ? '–' : money(l.rewards.redeemedLifetime) + ' lifetime' }}@if (l.rewards.redeemedYear !== null) { · {{ money(l.rewards.redeemedYear) }} in {{ l.points.yearLabel ?? 'the latest year' }}}</dd>
+            @if (l.rewards.expiredLifetime) {
+              <dt>Rewards expired</dt>
+              <dd>{{ money(l.rewards.expiredLifetime) }} lifetime</dd>
+            }
+            <dt>Lifetime trips</dt>
+            <dd>{{ l.lifetimeTrips === null ? '–' : fmt(l.lifetimeTrips) }}</dd>
+            <dt>Lifetime casino win</dt>
+            <dd>{{ l.lifetimeCasinoWin === null ? '–' : money(l.lifetimeCasinoWin) }}</dd>
+            <dt>Lifetime comps</dt>
+            <dd>{{ l.lifetimeComps === null ? '–' : money(l.lifetimeComps) }}</dd>
+            <dt>Action cash</dt>
+            <dd>{{ l.actionCashEarned === null ? '–' : money(l.actionCashEarned) + ' earned' }}@if (l.actionCashUsed !== null) { · {{ money(l.actionCashUsed) }} used}</dd>
+            <dt>Member since</dt>
+            <dd>{{ date(l.memberSince) }}</dd>
+          </dl>
+          <p class="note">No reward balance is shown: in the sample, redemptions often exceed recorded earnings, so a balance can't be derived yet.</p>
+        } @else {
+          <p class="note">This player has no row in the WinStar loyalty sample yet (lifetime file and point buckets cover about 7,000 accounts).</p>
+        }
+      </section>
+
+      <section class="card" aria-labelledby="cdp-prefs">
+        <div class="card-head"><div><h2 id="cdp-prefs">What and when they play</h2><div class="card-sub">Last 12 months, every site</div></div></div>
+        @if (preferenceRows().length > 0) {
+          <dl class="figures">
+            @for (r of preferenceRows(); track r.label) {
+              <dt>{{ r.label }}</dt>
+              <dd><strong>{{ r.value }}</strong> <span class="extra">{{ r.note }}</span></dd>
+            }
+          </dl>
+          <p class="note">
+            From the gaming trips{{ pl.preferences?.slotRatings ? ' and ' + fmt(pl.preferences!.slotRatings) + ' slot ratings' : '' }}.
+            Game names aren't loaded in GEM yet, so games show as loyalty-system codes.
+          </p>
+        } @else {
+          <p class="note">No rated play or trips in the 12 months.</p>
+        }
+      </section>
+
+      <section class="card" aria-labelledby="cdp-reach1">
+        <div class="card-head"><div><h2 id="cdp-reach1">Can we reach them?</h2><div class="card-sub">Current consent and contact, per channel</div></div></div>
+        <div class="table-wrap">
+          <table class="data">
+            <thead><tr><th scope="col">Channel</th><th scope="col">Reachable</th><th scope="col">Why</th><th scope="col">Consent</th></tr></thead>
+            <tbody>
+              @for (r of pl.reach; track r.channel) {
+                <tr>
+                  <th scope="row">{{ channelLabel[r.channel] }}</th>
+                  <td>@if (r.reachable) {<span class="ok"><span aria-hidden="true">✓</span> Yes</span>} @else {<span class="no"><span aria-hidden="true">✕</span> No</span>}</td>
+                  <td>{{ reasonLabel[r.reason] }}</td>
+                  <td>{{ r.consentStatus === 'none' ? '–' : (r.consentStatus === 'opt_in' ? 'Opted in ' : 'Opted out ') + when(r.consentAt) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="note">On file: {{ onFile() }}. Values are never shown here.</p>
+      </section>
+
+      <section class="card" aria-labelledby="cdp-ngmix">
+        <div class="card-head"><div><h2 id="cdp-ngmix">Non-gaming, last 12 months</h2><div class="card-sub">Paid, before tax and tips · {{ count(p.hotelStays, 'stay') }}, {{ count(p.hotelNights, 'night') }} · {{ money(p.nonGamingComp) }} comped or on points</div></div></div>
+        <app-bar-list [items]="nonGamingBars()" empty="No paid non-gaming in the 12 months." />
+      </section>
+    </div>
+
+    <section class="card" aria-labelledby="cdp-bysite">
+      <div class="card-head"><div><h2 id="cdp-bysite">By site, last 12 months</h2></div></div>
+      @if (pl.sites.length === 0) {
+        <p class="note">No activity at any site in the 12 months.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th scope="col">Site</th>
+                <th scope="col" class="num">Visit days</th>
+                <th scope="col" class="num">Trips</th>
+                <th scope="col" class="num">Theo</th>
+                <th scope="col" class="num">Casino win</th>
+                <th scope="col" class="num">Comps</th>
+                <th scope="col" class="num">Non-gaming paid</th>
+                <th scope="col">First visit</th>
+                <th scope="col">Last visit</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (s of pl.sites; track s.siteCode) {
+                <tr>
+                  <th scope="row">{{ siteName(s.siteCode) }}</th>
+                  <td class="num">{{ fmt(s.visitDays) }}</td>
+                  <td class="num">{{ fmt(s.trips) }}</td>
+                  <td class="num">{{ money(s.theo) }}</td>
+                  <td class="num">{{ money(s.casinoWin) }}</td>
+                  <td class="num">{{ money(s.compsIssued) }}</td>
+                  <td class="num">{{ money(s.nonGamingPaid) }}</td>
+                  <td>{{ date(s.firstVisit) }}</td>
+                  <td>{{ date(s.lastVisit) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+
+    <section class="card" aria-labelledby="cdp-recent">
+      <div class="card-head"><div><h2 id="cdp-recent">Recent activity</h2><div class="card-sub">Latest {{ pl.recent.length }} gaming trips and non-gaming records, any date</div></div></div>
+      @if (pl.recent.length === 0) {
+        <p class="note">No activity on record.</p>
+      } @else {
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Site</th>
+                <th scope="col">What</th>
+                <th scope="col">Detail</th>
+                <th scope="col" class="num">Value</th>
+                <th scope="col" class="num">Comp</th>
+                <th scope="col">Status</th>
+                <th scope="col">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (a of pl.recent; track $index) {
+                <tr>
+                  <td>{{ date(a.date) }}</td>
+                  <td>{{ siteName(a.siteCode) }}</td>
+                  <td>{{ kindLabel[a.kind] }}</td>
+                  <td>{{ a.detail }}</td>
+                  <td class="num">{{ money(a.value) }} <span class="extra">{{ a.kind === 'gaming' ? 'theo' : 'paid' }}</span></td>
+                  <td class="num">{{ a.comp ? money(a.comp) : '–' }}</td>
+                  <td>{{ a.status === 'completed' ? 'Completed' : a.status === 'cancelled' ? 'Cancelled' : 'No show' }}</td>
+                  <td>
+                    <span class="tag" [class.warn]="a.isMock" [class.good]="!a.isMock">{{ a.isMock ? 'mock' : 'real' }}</span>
+                    @if (a.identityMethod === 'email') {
+                      <span class="tag">matched by email</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+</div>

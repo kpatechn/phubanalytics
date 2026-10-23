@@ -4,6 +4,10 @@ const EnvSchema = z
   .object({
     DATABASE_URL: z.url(),
     DATABASE_SSL: z.enum(['require', 'disable']).default('require'),
+    // Optional Chickasaw CDP database (GEM, dexiga). Without it the CDP endpoints answer 404.
+    GEM_DATABASE_URL: z.url().optional(),
+    GEM_DATABASE_SSL: z.enum(['require', 'disable']).default('require'),
+    CDP_CLIENT_NAME: z.string().min(1).default('Chickasaw'),
     APP_ENVIRONMENT: z.enum(['prod', 'staging', 'dev']),
     AUTH_MODE: z.enum(['jwt', 'dev']).default('jwt'),
     JWT_JWKS_URL: z.url().optional(),

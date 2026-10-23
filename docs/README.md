@@ -16,8 +16,8 @@ Start here if you're new to PlayerHub Analytics. Read in this order.
 
 | Path | Contents |
 |---|---|
-| `apps/api` | Fastify summary API (`src/repo.ts`, `src/platform.ts` hold every query) |
-| `apps/web` | Angular dashboard (`src/app/analytics` pages, `src/app/shared` components, `insights.ts` rules, `metrics.ts` definitions) |
+| `apps/api` | Fastify summary API (`src/repo.ts`, `src/platform.ts` hold every query; `src/cdp.ts` the Chickasaw CDP queries) |
+| `apps/web` | Angular dashboard (`src/app/analytics` pages, `src/app/cdp` the Chickasaw CDP section, `src/app/shared` components, `insights.ts` rules, `metrics.ts` definitions) |
 | `packages/contracts` | Response types shared by API and web |
 | `db/migrations` | 001 event rollups, 002 engagement, 003 `dextrans` link |
 | `db/seeds`, `db/ops`, `db/tests`, `db/rollback` | Configuration data, operational scripts, checks, rollbacks |
