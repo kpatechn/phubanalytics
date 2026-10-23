@@ -16,6 +16,7 @@ scripts/mock-chickasaw.sh
 - The same inputs always give identical rows: every random draw is a hash of a text key (`cdp_mock.u`), not `random()`.
 - Window: `START_DATE` / `END_DATE`, default 2024-06-04 to 2025-07-04, the 13 months up to the WinStar sample's last load. When a fresh WinStar load arrives, rerun with a new window.
 - Remove it all: `psql "service=gem-dev dbname=dexiga" -f db/cdp-mock/drop.sql`.
+- The CDP prototype in schema `cdp` reads these tables. After a rebuild, refresh it with `scripts/build-cdp.sh` ([../cdp/README.md](../cdp/README.md)).
 
 | File | Builds |
 |---|---|
