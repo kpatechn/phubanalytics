@@ -11,6 +11,7 @@ import { PlanRefused, type RxRepo } from './reinvestment.js';
 import type { Config } from './config.js';
 import { DateRangeError, isIsoDate, resolveRange, todayIn } from './dates.js';
 import type { AnalyticsRepo, Scope } from './repo.js';
+import { unavailable } from './unavailable.js';
 
 export interface AppDeps {
   config: Pick<Config, 'AUTH_MODE' | 'ALLOWED_ORIGIN'>;
@@ -109,6 +110,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ProblemError) return sendProblem(reply, error.problem);
+    const down = unavailable(error, request.url.split('?')[0] ?? '');
+    if (down) {
+      request.log.warn({ err: error }, 'data source unavailable');
+      if (down.retryAfter) reply.header('retry-after', String(down.retryAfter));
+      return sendProblem(reply, down.problem);
+    }
     request.log.error({ err: error }, 'request failed');
     return sendProblem(reply, { type: 'about:blank', title: 'Internal Server Error', status: 500 });
   });
