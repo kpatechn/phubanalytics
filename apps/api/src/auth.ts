@@ -6,8 +6,10 @@ export interface Principal {
   roles: Role[];
 }
 
+export type Headers = Record<string, string | string[] | undefined>;
+
 /** Resolves the caller from request headers; null means unauthenticated. */
-export type Authenticator = (headers: { authorization?: string | undefined }) => Promise<Principal | null>;
+export type Authenticator = (headers: Headers) => Promise<Principal | null>;
 
 export const VIEW_ROLE: Record<View, Role> = {
   executive: 'analytics:exec',
@@ -37,25 +39,41 @@ export function devAuthenticator(): Authenticator {
   return async () => ({ subject: 'dev-user', roles: ['analytics:admin'] });
 }
 
-/** Bearer JWT, verified against the identity provider's keys. Roles come from one claim. */
+/** The token from the Authorization header (Bearer) or, behind a sign-in proxy, from the header it sets. */
+function tokenFrom(headers: Headers, header: string): string | null {
+  const value = headers[header];
+  if (typeof value !== 'string') return null;
+  if (header === 'authorization') return /^Bearer\s+(\S+)$/i.exec(value)?.[1] ?? null;
+  return /^\S+$/.test(value) ? value : null;
+}
+
+/** JWT verified against the identity provider's keys. Roles come from one claim. */
 export function jwtAuthenticator(options: {
   keys: JWTVerifyGetKey;
   issuer?: string | undefined;
   audience?: string | undefined;
   rolesClaim: string;
+  /** Header carrying the token; 'authorization' (the default) means a Bearer token. */
+  tokenHeader?: string | undefined;
+  /** Cognito access tokens: the app client they were issued to. */
+  clientId?: string | undefined;
+  subjectClaim?: string | undefined;
 }): Authenticator {
+  const header = options.tokenHeader ?? 'authorization';
+  const subjectClaim = options.subjectClaim ?? 'sub';
   return async (headers) => {
-    const match = /^Bearer\s+(\S+)$/i.exec(headers.authorization ?? '');
-    const token = match?.[1];
+    const token = tokenFrom(headers, header);
     if (!token) return null;
     try {
       const { payload } = await jwtVerify(token, options.keys, {
         ...(options.issuer ? { issuer: options.issuer } : {}),
         ...(options.audience ? { audience: options.audience } : {}),
       });
+      if (options.clientId && payload['client_id'] !== options.clientId) return null;
       const claim = payload[options.rolesClaim];
       const values = Array.isArray(claim) ? claim : typeof claim === 'string' ? claim.split(/[\s,]+/) : [];
-      return { subject: typeof payload.sub === 'string' ? payload.sub : '', roles: values.filter(isRole) };
+      const subject = payload[subjectClaim];
+      return { subject: typeof subject === 'string' ? subject : '', roles: values.filter(isRole) };
     } catch {
       return null;
     }

@@ -1,0 +1,15 @@
+# Only sources go into the image build: never local configuration, data or build output.
+**/node_modules
+**/dist
+**/.angular
+**/coverage
+**/.env
+**/.env.*
+.git
+.claude
+reports
+db
+docs
+scripts
+*.xlsx
+*.log

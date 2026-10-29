@@ -1,5 +1,6 @@
 import cors from '@fastify/cors';
 import etag from '@fastify/etag';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import { z } from 'zod';
 import type { CdpEnvelope, CdpMeta, Envelope, Me, Problem, Property, RxMeta, View } from '@phub/contracts';
@@ -13,12 +14,15 @@ import type { AnalyticsRepo, Scope } from './repo.js';
 
 export interface AppDeps {
   config: Pick<Config, 'AUTH_MODE' | 'ALLOWED_ORIGIN'>;
-  repo: AnalyticsRepo;
+  /** Analytics rollups. Absent: the executive, engagement, marketing and IT views are hidden and answer 404. */
+  repo?: AnalyticsRepo | undefined;
   /** Chickasaw CDP (GEM database). Absent: the cdp view is hidden and its endpoints answer 404. */
   cdp?: CdpRepo | undefined;
   /** Reinvestment screens (serving database, optimizer). Absent: the view is hidden and its endpoints answer 404. */
   reinvestment?: RxRepo | undefined;
   authenticate: Authenticator;
+  /** Built web app served from the same origin, with index.html for client-side routes. */
+  webRoot?: string | undefined;
   now?: () => Date;
   logger?: FastifyServerOptions['logger'];
 }
@@ -97,8 +101,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const cdpResponses = new TtlCache<unknown>(5 * 60_000, 50);
   // Serving tables refresh hourly (reverse ETL); runs and patrons are never cached.
   const rxResponses = new TtlCache<unknown>(5 * 60_000, 50);
-  const visibleViews = (principal: Principal): View[] =>
-    viewsFor(principal).filter((v) => (v !== 'cdp' || deps.cdp !== undefined) && (v !== 'reinvestment' || deps.reinvestment !== undefined));
+  const configured = (v: View): boolean =>
+    v === 'cdp' ? deps.cdp !== undefined : v === 'reinvestment' ? deps.reinvestment !== undefined : deps.repo !== undefined;
+  const visibleViews = (principal: Principal): View[] => viewsFor(principal).filter(configured);
 
   app.decorateRequest('principal', null);
 
@@ -107,10 +112,35 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     request.log.error({ err: error }, 'request failed');
     return sendProblem(reply, { type: 'about:blank', title: 'Internal Server Error', status: 500 });
   });
-  app.setNotFoundHandler((_request, reply) => sendProblem(reply, { type: 'about:blank', title: 'Not Found', status: 404 }));
+  // Everything the server sends: no sniffing, no framing, no referrer leaving the site.
+  app.addHook('onSend', async (_request, reply) => {
+    reply.header('x-content-type-options', 'nosniff');
+    reply.header('x-frame-options', 'DENY');
+    reply.header('referrer-policy', 'same-origin');
+  });
+
+  if (deps.webRoot) {
+    await app.register(fastifyStatic, {
+      root: deps.webRoot,
+      wildcard: false,
+      // Our own cache headers: Angular's file names carry a content hash; index.html is always revalidated.
+      cacheControl: false,
+      setHeaders: (res, path) =>
+        res.setHeader('cache-control', path.endsWith('.html') ? 'no-cache' : /-[A-Z0-9]{8}\.(js|css)$/.test(path) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'),
+    });
+  }
+  const webRoot = deps.webRoot;
+  app.setNotFoundHandler((request, reply) => {
+    // Client-side routes (/reinvestment/offers) get the app; unknown API paths get a problem.
+    const path = request.url.split('?')[0] ?? '';
+    if (webRoot && (request.method === 'GET' || request.method === 'HEAD') && !path.startsWith('/api/') && !/\.[a-z0-9]+$/i.test(path)) {
+      return reply.header('cache-control', 'no-cache').sendFile('index.html');
+    }
+    return sendProblem(reply, { type: 'about:blank', title: 'Not Found', status: 404 });
+  });
 
   async function requirePrincipal(request: FastifyRequest): Promise<Principal> {
-    request.principal ??= await deps.authenticate({ authorization: request.headers.authorization });
+    request.principal ??= await deps.authenticate(request.headers);
     if (!request.principal) throw problem(401, 'Unauthorized', 'A valid bearer token is required.');
     return request.principal;
   }
@@ -119,6 +149,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const principal = await requirePrincipal(request);
     if (visibleViews(principal).length === 0) throw problem(403, 'Forbidden', 'No analytics role.');
     return principal;
+  }
+
+  function requireRepo(): AnalyticsRepo {
+    if (!deps.repo) throw problem(404, 'Not Found', 'The analytics database is not configured on this server.');
+    return deps.repo;
   }
 
   /** The CDP repo, after checking it is configured and the caller may see it. */
@@ -150,8 +185,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return problem(400, 'Bad Request', 'Invalid request.', issues.map((i) => ({ path: i.path.join('.'), message: i.message })));
   }
 
-  async function resolveProperty(id: number | undefined): Promise<Property> {
-    const properties = await propertyList.getOrSet('all', () => deps.repo.properties());
+  async function resolveProperty(repo: AnalyticsRepo, id: number | undefined): Promise<Property> {
+    const properties = await propertyList.getOrSet('all', () => repo.properties());
     const property = id === undefined ? properties[0] : properties.find((p) => p.propertyId === id);
     if (!property) throw problem(404, 'Not Found', id === undefined ? 'No properties are configured.' : `Unknown property ${id}.`);
     return property;
@@ -162,12 +197,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.get('/healthz', async () => ({ status: 'ok' }));
 
   app.get('/readyz', async (_request, reply) => {
+    const repo = deps.repo;
+    // Without the rollups there is nothing here that can go stale.
+    if (!repo) return { status: 'ready', properties: [] };
     try {
-      await deps.repo.ping();
-      const properties = await deps.repo.properties();
+      await repo.ping();
+      const properties = await repo.properties();
       const checks = await Promise.all(
         properties.map(async (p) => {
-          const f = await deps.repo.freshness(p);
+          const f = await repo.freshness(p);
           const fresh = f.lastSuccessAt !== null && now().getTime() - f.lastSuccessAt.getTime() <= MAX_REFRESH_AGE_MS;
           return { propertyId: p.propertyId, fresh, lastRefreshAt: f.lastSuccessAt, queuedHours: f.queuedHours };
         }),
@@ -191,13 +229,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get('/api/analytics/properties', async (request, reply) => {
     await requireAnyView(request);
+    const repo = requireRepo();
     reply.header('cache-control', 'private, max-age=60');
-    return propertyList.getOrSet('all', () => deps.repo.properties());
+    return propertyList.getOrSet('all', () => repo.properties());
   });
 
   for (const view of VIEWS) {
     app.get(`/api/analytics/${view}`, async (request, reply) => {
       const principal = await requirePrincipal(request);
+      const repo = requireRepo();
       if (!canView(principal, view)) throw problem(403, 'Forbidden', `The ${view} view needs another role.`);
 
       const parsed = SummaryQuery.safeParse(request.query);
@@ -209,7 +249,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
           parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
         );
       }
-      const property = await resolveProperty(parsed.data.property);
+      const property = await resolveProperty(repo, parsed.data.property);
       let range;
       try {
         range = resolveRange(parsed.data, property.timeZone, now());
@@ -223,13 +263,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         const scope: Scope = { tenantId: property.tenantId, propertyId: property.propertyId, from: range.from, to: range.to };
         const [data, freshness] = await Promise.all([
           view === 'executive'
-            ? deps.repo.executive(scope, { ...scope, from: range.previousFrom, to: range.previousTo })
+            ? repo.executive(scope, { ...scope, from: range.previousFrom, to: range.previousTo })
             : view === 'engagement'
-              ? deps.repo.engagement(scope, { ...scope, from: range.previousFrom, to: range.previousTo }, todayIn(property.timeZone, now()))
+              ? repo.engagement(scope, { ...scope, from: range.previousFrom, to: range.previousTo }, todayIn(property.timeZone, now()))
               : view === 'marketing'
-                ? deps.repo.marketing(scope)
-                : deps.repo.it(scope),
-          deps.repo.freshness(property),
+                ? repo.marketing(scope)
+                : repo.it(scope),
+          repo.freshness(property),
         ]);
         return {
           meta: {

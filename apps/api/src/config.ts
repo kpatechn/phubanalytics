@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 const EnvSchema = z
   .object({
-    DATABASE_URL: z.url(),
+    // Analytics rollups (Graton dev dexl). Optional: without it the executive, engagement,
+    // marketing and IT views are hidden and their endpoints answer 404.
+    DATABASE_URL: z.url().optional(),
     DATABASE_SSL: z.enum(['require', 'disable']).default('require'),
     // Optional Chickasaw CDP database (GEM, dexiga). Without it the CDP endpoints answer 404.
     GEM_DATABASE_URL: z.url().optional(),
@@ -22,6 +24,15 @@ const EnvSchema = z
     JWT_ISSUER: z.string().min(1).optional(),
     JWT_AUDIENCE: z.string().min(1).optional(),
     JWT_ROLES_CLAIM: z.string().min(1).default('roles'),
+    // Where the token arrives: 'authorization' (Bearer), or a header a sign-in proxy sets, such as
+    // the load balancer's x-amzn-oidc-accesstoken (Cognito access token).
+    JWT_TOKEN_HEADER: z.string().regex(/^[a-z0-9-]{1,64}$/, 'must be a lower-case header name').default('authorization'),
+    // Cognito access tokens carry client_id instead of aud: when set, it must match.
+    JWT_CLIENT_ID: z.string().min(1).optional(),
+    // The claim recorded as who asked (e.g. Cognito's 'username' rather than its opaque 'sub').
+    JWT_SUBJECT_CLAIM: z.string().min(1).default('sub'),
+    // Built web app (apps/web/dist/web/browser) to serve from the same origin; unset in development.
+    WEB_ROOT: z.string().min(1).optional(),
     ALLOWED_ORIGIN: z.url().optional(),
     PORT: z.coerce.number().int().min(1).max(65535).default(3000),
     HOST: z.string().min(1).default('127.0.0.1'),

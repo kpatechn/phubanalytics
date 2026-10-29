@@ -5,7 +5,7 @@ import type { Config } from './config.js';
  * Read-only pool. Every session starts read-only with a 10 s statement
  * timeout, whatever role DATABASE_URL uses.
  */
-export function createSql(config: Pick<Config, 'DATABASE_URL' | 'DATABASE_SSL'>) {
+export function createSql(config: { DATABASE_URL: string; DATABASE_SSL: Config['DATABASE_SSL'] }) {
   return postgres(config.DATABASE_URL, {
     ssl: config.DATABASE_SSL === 'require' ? 'require' : false,
     max: 10,

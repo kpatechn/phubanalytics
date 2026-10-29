@@ -10,7 +10,8 @@ import { createServingRepo } from './reinvestment.js';
 import { createRepo } from './repo.js';
 
 const config = loadConfig();
-const sql = createSql(config);
+// Analytics rollups (Graton dev dexl); a reinvestment-only deployment runs without them.
+const sql = config.DATABASE_URL ? createSql({ DATABASE_URL: config.DATABASE_URL, DATABASE_SSL: config.DATABASE_SSL }) : null;
 // The Chickasaw CDP lives in another database (GEM); its own read-only pool.
 const gemSql = config.GEM_DATABASE_URL ? createSql({ DATABASE_URL: config.GEM_DATABASE_URL, DATABASE_SSL: config.GEM_DATABASE_SSL }) : null;
 
@@ -37,17 +38,21 @@ const authenticate =
         issuer: config.JWT_ISSUER,
         audience: config.JWT_AUDIENCE,
         rolesClaim: config.JWT_ROLES_CLAIM,
+        tokenHeader: config.JWT_TOKEN_HEADER,
+        clientId: config.JWT_CLIENT_ID,
+        subjectClaim: config.JWT_SUBJECT_CLAIM,
       });
 
 const app = await buildApp({
   config,
-  repo: createRepo(sql),
+  repo: sql ? createRepo(sql) : undefined,
   cdp: gemSql ? createCdpRepo(gemSql, config.CDP_CLIENT_NAME) : undefined,
   reinvestment,
   authenticate,
+  webRoot: config.WEB_ROOT,
   logger: {
     level: config.LOG_LEVEL,
-    redact: ['req.headers.authorization', 'req.headers.cookie'],
+    redact: ['req.headers.authorization', 'req.headers.cookie', 'req.headers["x-amzn-oidc-accesstoken"]', 'req.headers["x-amzn-oidc-data"]'],
   },
 });
 
@@ -58,7 +63,7 @@ if (config.AUTH_MODE === 'dev') {
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutting down');
   await app.close();
-  await Promise.all([sql.end({ timeout: 5 }), gemSql?.end({ timeout: 5 })]);
+  await Promise.all([sql?.end({ timeout: 5 }), gemSql?.end({ timeout: 5 })]);
   process.exit(0);
 };
 process.on('SIGINT', () => void shutdown('SIGINT'));
