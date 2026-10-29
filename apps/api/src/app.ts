@@ -2,10 +2,11 @@ import cors from '@fastify/cors';
 import etag from '@fastify/etag';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type FastifyServerOptions } from 'fastify';
 import { z } from 'zod';
-import type { CdpEnvelope, CdpMeta, Envelope, Me, Problem, Property, View } from '@phub/contracts';
+import type { CdpEnvelope, CdpMeta, Envelope, Me, Problem, Property, RxMeta, View } from '@phub/contracts';
 import { canView, viewsFor, type Authenticator, type Principal } from './auth.js';
 import { TtlCache } from './cache.js';
 import type { CdpRepo } from './cdp.js';
+import { PlanRefused, type RxRepo } from './reinvestment.js';
 import type { Config } from './config.js';
 import { DateRangeError, isIsoDate, resolveRange, todayIn } from './dates.js';
 import type { AnalyticsRepo, Scope } from './repo.js';
@@ -15,6 +16,8 @@ export interface AppDeps {
   repo: AnalyticsRepo;
   /** Chickasaw CDP (GEM database). Absent: the cdp view is hidden and its endpoints answer 404. */
   cdp?: CdpRepo | undefined;
+  /** Reinvestment screens (serving database, optimizer). Absent: the view is hidden and its endpoints answer 404. */
+  reinvestment?: RxRepo | undefined;
   authenticate: Authenticator;
   now?: () => Date;
   logger?: FastifyServerOptions['logger'];
@@ -30,6 +33,19 @@ const SummaryQuery = z.object({
 
 const SegmentQuery = z.object({
   segment: z.string().regex(/^[a-z0-9_]{1,40}$/, 'must be a segment code'),
+});
+
+const CampaignParams = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/, 'must be a campaign ID') });
+const RunParams = z.object({ id: z.string().regex(/^opt__\d{8}T\d{6}$/, 'must be an optimizer run ID') });
+const PatronBody = z.object({ patronId: z.uuid('must be a patron ID') });
+const SiteAmounts = z.record(z.string().regex(/^[A-Za-z0-9]{1,8}:[A-Za-z0-9]{1,8}$/), z.number().min(0).max(50_000_000));
+const PlanBody = z.object({
+  budget: z.number().positive().max(50_000_000),
+  holdout: z.number().min(0).max(0.5).optional(),
+  risk: z.enum(['conservative', 'expected']).optional(),
+  caps: SiteAmounts.optional(),
+  floors: SiteAmounts.optional(),
+  maxOffers: z.number().int().positive().max(5_000_000).nullable().optional(),
 });
 
 const LookupBody = z.object({
@@ -79,7 +95,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // CDP tables change only when cdp.refresh() runs, so aggregates keep for 5 minutes.
   // Player lookups are never cached.
   const cdpResponses = new TtlCache<unknown>(5 * 60_000, 50);
-  const visibleViews = (principal: Principal): View[] => viewsFor(principal).filter((v) => v !== 'cdp' || deps.cdp !== undefined);
+  // Serving tables refresh hourly (reverse ETL); runs and patrons are never cached.
+  const rxResponses = new TtlCache<unknown>(5 * 60_000, 50);
+  const visibleViews = (principal: Principal): View[] =>
+    viewsFor(principal).filter((v) => (v !== 'cdp' || deps.cdp !== undefined) && (v !== 'reinvestment' || deps.reinvestment !== undefined));
 
   app.decorateRequest('principal', null);
 
@@ -108,6 +127,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!deps.cdp) throw problem(404, 'Not Found', 'The CDP is not configured on this server.');
     if (!canView(principal, 'cdp')) throw problem(403, 'Forbidden', 'The CDP needs the analytics:cdp role.');
     return deps.cdp;
+  }
+
+  /** The reinvestment repo, after checking it is configured and the caller may see it. */
+  async function requireRx(request: FastifyRequest): Promise<{ rx: RxRepo; principal: Principal }> {
+    const principal = await requirePrincipal(request);
+    if (!deps.reinvestment) throw problem(404, 'Not Found', 'The reinvestment screens are not configured on this server.');
+    if (!canView(principal, 'reinvestment')) throw problem(403, 'Forbidden', 'Reinvestment needs the analytics:marketing role.');
+    return { rx: deps.reinvestment, principal };
   }
 
   async function cdpMeta(cdp: CdpRepo): Promise<CdpMeta> {
@@ -270,6 +297,79 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     reply.header('cache-control', 'private, no-store');
     if (!data) throw problem(404, 'Not Found', 'No player with that Club Passport number.');
     return { meta, data } as CdpEnvelope<unknown>;
+  });
+
+  // Reinvestment -----------------------------------------------------------------
+
+  const rxMeta = (rx: RxRepo): Promise<RxMeta> => rxResponses.getOrSet('meta', () => rx.meta()) as Promise<RxMeta>;
+
+  app.get('/api/reinvestment/overview', async (request, reply) => {
+    const { rx } = await requireRx(request);
+    const [meta, data] = await Promise.all([rxMeta(rx), rxResponses.getOrSet('overview', () => rx.overview())]);
+    reply.header('cache-control', 'private, max-age=300');
+    return { meta, data };
+  });
+
+  app.get('/api/reinvestment/campaigns/:id', async (request, reply) => {
+    const { rx } = await requireRx(request);
+    const parsed = CampaignParams.safeParse(request.params);
+    if (!parsed.success) throw invalid(parsed.error.issues);
+    const [meta, data] = await Promise.all([rxMeta(rx), rxResponses.getOrSet(`campaign:${parsed.data.id}`, () => rx.campaign(parsed.data.id))]);
+    if (!data) throw problem(404, 'Not Found', `Unknown campaign ${parsed.data.id}.`);
+    reply.header('cache-control', 'private, max-age=300');
+    return { meta, data };
+  });
+
+  // Patron IDs are pseudonymous but still about a person: bodies only, never URLs, never cached.
+  app.get('/api/reinvestment/patrons/examples', async (request, reply) => {
+    const { rx } = await requireRx(request);
+    const [meta, data] = await Promise.all([rxMeta(rx), rx.patronExamples()]);
+    reply.header('cache-control', 'private, no-store');
+    return { meta, data };
+  });
+
+  app.post('/api/reinvestment/patrons/lookup', async (request, reply) => {
+    const { rx } = await requireRx(request);
+    const parsed = PatronBody.safeParse(request.body);
+    if (!parsed.success) throw invalid(parsed.error.issues);
+    const [meta, data] = await Promise.all([rxMeta(rx), rx.patron(parsed.data.patronId)]);
+    reply.header('cache-control', 'private, no-store');
+    if (!data) throw problem(404, 'Not Found', 'No patron with that ID.');
+    return { meta, data };
+  });
+
+  app.get('/api/reinvestment/optimizer/runs', async (request, reply) => {
+    const { rx } = await requireRx(request);
+    const [meta, data] = await Promise.all([rxMeta(rx), rx.runs()]);
+    reply.header('cache-control', 'private, no-store');
+    return { meta, data };
+  });
+
+  app.get('/api/reinvestment/optimizer/runs/:id', async (request, reply) => {
+    const { rx } = await requireRx(request);
+    const parsed = RunParams.safeParse(request.params);
+    if (!parsed.success) throw invalid(parsed.error.issues);
+    const [meta, data] = await Promise.all([rxMeta(rx), rx.run(parsed.data.id)]);
+    if (!data) throw problem(404, 'Not Found', `Unknown run ${parsed.data.id} (a new run reaches this list within a minute).`);
+    reply.header('cache-control', 'private, no-store');
+    return { meta, data };
+  });
+
+  // Plans a period: writes the plan to the lake and returns it. Nothing is sent to anyone.
+  app.post('/api/reinvestment/optimizer/runs', async (request, reply) => {
+    const { rx, principal } = await requireRx(request);
+    const parsed = PlanBody.safeParse(request.body);
+    if (!parsed.success) throw invalid(parsed.error.issues);
+    const meta = await rxMeta(rx);
+    if (!meta.optimizerEnabled) throw problem(404, 'Not Found', 'The optimizer is not configured on this server.');
+    try {
+      const data = await rx.plan(parsed.data, principal.subject);
+      reply.header('cache-control', 'private, no-store');
+      return { meta, data };
+    } catch (e) {
+      if (e instanceof PlanRefused) throw problem(400, 'Bad Request', e.message);
+      throw e;
+    }
   });
 
   return app;

@@ -3,7 +3,7 @@
 // name says guests or accounts.
 
 export type Environment = 'prod' | 'staging' | 'dev';
-export type View = 'executive' | 'engagement' | 'marketing' | 'it' | 'cdp';
+export type View = 'executive' | 'engagement' | 'marketing' | 'it' | 'cdp' | 'reinvestment';
 export type Role = 'analytics:exec' | 'analytics:marketing' | 'analytics:it' | 'analytics:cdp' | 'analytics:admin';
 
 export interface Property {
@@ -559,3 +559,202 @@ export interface CdpPlayer {
   /** Which identifiers point to this account. Values are never sent. */
   identifiers: { type: 'email' | 'mobile' | 'app_user'; verified: boolean }[];
 }
+
+// ---- Reinvestment: the data platform's serving database (one tenant, set in the API's config).
+// Money is US dollars; dates YYYY-MM-DD; patron IDs are the platform's pseudonymous IDs (no names).
+
+export interface RxMeta {
+  tenant: string;
+  /** 'mock' for simulated tenants: every page says the data is fictional. */
+  dataKind: 'mock' | 'real';
+  asOfMonth: string | null;
+  /** Finance rule version behind every contribution, e.g. 'draft-1:draft'. */
+  ruleVersion: string | null;
+  sites: { siteId: string; name: string }[];
+  optimizerEnabled: boolean;
+}
+
+export interface RxEnvelope<T> {
+  meta: RxMeta;
+  data: T;
+}
+
+export interface RxSiteMonth {
+  siteId: string;
+  siteName: string;
+  month: string;
+  patrons: number;
+  visits: number;
+  theo: number;
+  casinoWin: number;
+  freeplayRedeemed: number;
+  compsIssued: number;
+  reinvestment: number;
+  incentiveCost: number;
+  hospitalityPaid: number;
+  netContribution: number;
+}
+
+export type RxVerdict = 'window open' | 'too small to read' | 'pays back' | 'loses money' | 'no clear effect';
+
+export interface RxCampaign {
+  campaignId: string;
+  name: string;
+  offerType: string;
+  faceValue: number | null;
+  channelRule: string;
+  audienceName: string | null;
+  audienceRule: string;
+  holdoutShare: number;
+  assignedDate: string;
+  windowEnd: string;
+  nTreatment: number | null;
+  nHoldout: number | null;
+  excludedPatrons: number;
+  sentRate: number | null;
+  deliveredRate: number | null;
+  openedRate: number | null;
+  redeemedRate: number | null;
+  visitsLift: number | null;
+  visitsCiLow: number | null;
+  visitsCiHigh: number | null;
+  theoLift: number | null;
+  theoCiLow: number | null;
+  theoCiHigh: number | null;
+  netLift: number | null;
+  netCiLow: number | null;
+  netCiHigh: number | null;
+  netSignificant: boolean | null;
+  netIncrementalProfit: number | null;
+  servicingCost: number | null;
+  underpowered: boolean | null;
+  imbalanced: boolean | null;
+  heavyOverlap: boolean | null;
+  windowClosed: boolean | null;
+  verdict: RxVerdict;
+}
+
+export interface RxOverview {
+  months: RxSiteMonth[];
+  campaigns: RxCampaign[];
+}
+
+export type RxMetric = 'visits' | 'theo' | 'net_contribution' | 'incentive_cost';
+
+export interface RxLift {
+  segment: string;
+  metric: RxMetric;
+  nTreatment: number;
+  nHoldout: number;
+  meanTreatment: number;
+  meanHoldout: number;
+  adjustedDiff: number;
+  adjustedCiLow: number;
+  adjustedCiHigh: number;
+  significant: boolean;
+  minDetectableEffect: number;
+  prePeriodSmd: number | null;
+  underpowered: boolean;
+}
+
+export interface RxCampaignDetail {
+  campaign: RxCampaign;
+  lift: RxLift[];
+}
+
+export interface RxPatronExample {
+  patronId: string;
+  tierName: string | null;
+  homePropertyId: string | null;
+  netContribution12m: number;
+  note: string;
+}
+
+export interface RxEvent {
+  eventAt: string;
+  eventType: string;
+  siteId: string | null;
+  campaignId: string | null;
+  channel: string | null;
+  amount: number | null;
+  detail: string | null;
+}
+
+export interface RxPatron {
+  patronId: string;
+  asOfDate: string;
+  tierName: string | null;
+  tierPoints: number | null;
+  nextTierName: string | null;
+  pointsToNextTier: number | null;
+  homePropertyId: string | null;
+  sitesVisited12m: number;
+  visits12m: number;
+  theo12m: number;
+  adt12m: number | null;
+  casinoWin12m: number;
+  reinvestment12m: number;
+  reinvestmentRate: number | null;
+  hospitalityPaid12m: number;
+  netContribution12m: number;
+  recencyDays: number | null;
+  suppressOffers: boolean;
+  reach: { channel: string; reason: string }[];
+  journey: RxEvent[];
+}
+
+export interface RxConstraint {
+  kind: 'budget' | 'max_offers' | 'site_cap' | 'site_floor' | 'patrons' | 'room_nights';
+  name: string;
+  unit: string;
+  limit: number;
+  used: number | null;
+  binding: boolean | null;
+  /** Profit from one more unit of this limit. */
+  shadowPrice: number | null;
+}
+
+export interface RxAllocation {
+  templateId: string;
+  segment: string;
+  siteId: string;
+  eligible: number;
+  offers: number;
+  valuePerOffer: number;
+  costPerOffer: number;
+  spend: number;
+  profit: number;
+  responseSource: string;
+  reason: string;
+}
+
+export interface RxRunParams {
+  budget: number;
+  holdout: number;
+  risk: 'conservative' | 'expected';
+  caps: Record<string, number>;
+  floors: Record<string, number>;
+  maxOffers: number | null;
+}
+
+export interface RxRun {
+  runId: string;
+  createdAt: string;
+  status: string;
+  requestedBy: string | null;
+  params: RxRunParams;
+  spend: number;
+  profit: number;
+  offers: number;
+  holdoutPatrons: number;
+  baseline: { spend: number; profit: number; offers: number };
+  constraints: RxConstraint[];
+  skipped: { templateId: string; segment?: string; siteId?: string; eligible?: number; reason: string }[];
+}
+
+export interface RxRunDetail {
+  run: RxRun;
+  allocation: RxAllocation[];
+}
+
+export type RxRunRequest = Partial<Omit<RxRunParams, 'budget'>> & { budget: number };

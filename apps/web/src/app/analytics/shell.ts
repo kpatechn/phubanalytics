@@ -18,6 +18,7 @@ const TABS: { view: View; path: string; label: string }[] = [
   { view: 'marketing', path: 'marketing', label: 'Marketing' },
   { view: 'it', path: 'it', label: 'IT & Operations' },
   { view: 'cdp', path: 'cdp', label: 'Chickasaw CDP' },
+  { view: 'reinvestment', path: 'reinvestment', label: 'Reinvestment' },
 ];
 
 @Component({
@@ -47,8 +48,8 @@ export class Shell {
     ),
     { initialValue: null },
   );
-  /** The CDP is another client's data with its own window: the property, period and freshness controls don't apply. */
-  protected readonly inCdp = computed(() => (this.currentUrl() ?? this.router.url).startsWith('/cdp'));
+  /** The CDP and reinvestment are another client's data with their own window: property, period and freshness controls don't apply. */
+  protected readonly inCdp = computed(() => /^\/(cdp|reinvestment)\b/.test(this.currentUrl() ?? this.router.url));
   protected readonly property = this.filters.property;
   protected readonly rangeLabel = computed(() => {
     const r = this.filters.range();

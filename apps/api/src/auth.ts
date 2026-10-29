@@ -15,6 +15,7 @@ export const VIEW_ROLE: Record<View, Role> = {
   marketing: 'analytics:marketing',
   it: 'analytics:it',
   cdp: 'analytics:cdp',
+  reinvestment: 'analytics:marketing',
 };
 
 const ALL_ROLES: ReadonlySet<string> = new Set<Role>(['analytics:exec', 'analytics:marketing', 'analytics:it', 'analytics:cdp', 'analytics:admin']);

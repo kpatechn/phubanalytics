@@ -8,6 +8,14 @@ const EnvSchema = z
     GEM_DATABASE_URL: z.url().optional(),
     GEM_DATABASE_SSL: z.enum(['require', 'disable']).default('require'),
     CDP_CLIENT_NAME: z.string().min(1).default('Chickasaw'),
+    // Optional reinvestment screens: the data platform's serving database (RDS Data API) and the
+    // optimizer Lambda. Credentials come from the AWS default chain. Without them the view is hidden.
+    SERVING_CLUSTER_ARN: z.string().startsWith('arn:aws:rds:').optional(),
+    SERVING_SECRET_ARN: z.string().startsWith('arn:aws:secretsmanager:').optional(),
+    SERVING_DATABASE: z.string().regex(/^[a-z_][a-z0-9_]{0,62}$/).default('serving'),
+    REINVESTMENT_TENANT: z.string().regex(/^[a-z][a-z0-9_]{0,30}$/).default('chickasaw_sim'),
+    OPTIMIZER_FUNCTION: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
+    AWS_REGION: z.string().min(1).default('us-west-2'),
     APP_ENVIRONMENT: z.enum(['prod', 'staging', 'dev']),
     AUTH_MODE: z.enum(['jwt', 'dev']).default('jwt'),
     JWT_JWKS_URL: z.url().optional(),
@@ -22,6 +30,9 @@ const EnvSchema = z
   .superRefine((env, ctx) => {
     if (env.AUTH_MODE === 'dev' && env.APP_ENVIRONMENT !== 'dev') {
       ctx.addIssue({ code: 'custom', path: ['AUTH_MODE'], message: 'AUTH_MODE=dev is only allowed when APP_ENVIRONMENT=dev' });
+    }
+    if (Boolean(env.SERVING_CLUSTER_ARN) !== Boolean(env.SERVING_SECRET_ARN)) {
+      ctx.addIssue({ code: 'custom', path: ['SERVING_SECRET_ARN'], message: 'SERVING_CLUSTER_ARN and SERVING_SECRET_ARN go together' });
     }
     if (env.AUTH_MODE === 'jwt' && !env.JWT_JWKS_URL) {
       ctx.addIssue({ code: 'custom', path: ['JWT_JWKS_URL'], message: 'JWT_JWKS_URL is required when AUTH_MODE=jwt' });

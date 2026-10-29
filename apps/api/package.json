@@ -12,6 +12,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-lambda": "3.1149.0",
+    "@aws-sdk/client-rds-data": "3.1149.0",
     "@fastify/cors": "^11.3.1",
     "@fastify/etag": "^6.2.1",
     "fastify": "^5.12.7",

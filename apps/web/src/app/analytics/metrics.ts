@@ -246,6 +246,55 @@ export const METRICS = {
     source: 'cdp_mock.app_event',
     caveat: 'Mock data.',
   },
+  rxReinvestment: {
+    label: 'Reinvestment',
+    definition: 'Free play redeemed plus comps issued, at face value, over the last 12 months.',
+    source: 'serving.site_month (free play ledger, trip-file comps)',
+    caveat: 'Face value, not cost: what a free play dollar or a comp costs is a Finance rule, applied in net contribution.',
+  },
+  rxNetContribution: {
+    label: 'Net contribution',
+    definition: 'Theo less gaming fees and variable cost, plus paid hospitality less its variable cost, less incentive cost.',
+    source: 'serving.site_month (patron_day)',
+    caveat: 'Uses the draft finance rules until Finance approves them; the rule version is shown on the page.',
+  },
+  rxReinvestmentRate: {
+    label: 'Reinvestment rate',
+    definition: 'Reinvestment divided by theo.',
+    source: 'serving.site_month',
+  },
+  rxIncrementalProfit: {
+    label: 'Measured incremental profit',
+    definition: 'Sum over closed campaigns of treated patrons x the measured lift in net contribution, less sending cost.',
+    source: 'serving.campaign_summary (treatment vs holdout, pre-period adjusted)',
+    caveat: 'Each campaign has its own uncertainty; small campaigns can be off in either direction.',
+  },
+  rxCampaignsPaying: {
+    label: 'Campaigns that pay back',
+    definition: 'Closed campaigns whose net contribution lift is positive and statistically significant.',
+    source: 'serving.campaign_summary',
+  },
+  rxPlanProfit: {
+    label: 'Expected profit',
+    definition: 'Sum over planned offers of the measured lift per offer, less one standard error when the risk setting is conservative.',
+    source: 'optimizer run',
+    caveat: 'A forecast from past campaigns, not a promise: the holdout in the plan measures what actually happens.',
+  },
+  rxPlanSpend: {
+    label: 'Planned spend',
+    definition: 'Expected incentive and sending cost of the planned offers.',
+    source: 'optimizer run',
+  },
+  rxPlanOffers: {
+    label: 'Offers',
+    definition: 'Patrons who would receive an offer; the holdout is kept back to measure the plan.',
+    source: 'optimizer run',
+  },
+  rxBaseline: {
+    label: 'Last period\'s mix',
+    definition: 'Expected profit of repeating the last campaigns\' mix of offers, scaled to the same budget, with the same response model.',
+    source: 'optimizer run',
+  },
 } satisfies Record<string, MetricDefinition>;
 
 export type MetricKey = keyof typeof METRICS;
